@@ -14,10 +14,16 @@ class Wikipedia_Scraper:
         # TODO: replace filepath with relative file path
         self.driver = webdriver.Chrome(executable_path='/Users/alex3/Documents/UT/NLG/LiFT-Co-Expert-Text-Generation/chromedriver')
 
-    def run_scraper(self, min_pages = 1000, max_depth = 3, output_file = "data/category_text_pairs"):
-        page_urls = self.get_pages( min_pages = min_pages, max_depth = max_depth)
+    def run_scraper(self, min_pages = 1000, max_depth = 3, output_file = "data/category_text_pairs", page_url_path = None):
+        self.output_file = output_file
+        if page_url_path != None:
+            with open(page_url_path, 'rb') as f:
+                page_urls = pickle.load(f)
+        else:
+            page_urls = self.get_pages( min_pages = min_pages, max_depth = max_depth)
+            self.save_data(page_urls, output_file = "data/page_urls", format="pickle")
         category_to_text_pairs = self.make_category_text_pairs(page_urls)
-        self.save_data(category_to_text_pairs, output_file = output_file, format="pickle")
+        self.save_data(category_to_text_pairs, output_file = self.output_file, format="pickle")
         print("Done Scraping")
 
     def save_data(self, category_to_text_pairs, output_file, format="pickle"):
@@ -77,16 +83,28 @@ class Wikipedia_Scraper:
 
     def make_category_text_pairs(self, page_urls):
         category_to_texts = {}
-        for page_url in page_urls:
-            page_category = page_url.split("/")[-1]
-            time.sleep(.5)
-            categories = self.get_categories_from_page(page_category)
-            page = self.wiki_wiki.page(page_category)
-            text = Wikipedia_Scraper.get_text_from_page(page)
+        for page_num, page_url in enumerate(page_urls):
+            attempt_cnt = 0
+            max_attempts = 5
+            while attempt_cnt < max_attempts:
+                page_category = page_url.split("/")[-1]
+                time.sleep(.5)
+                try:
+                    categories = self.get_categories_from_page(page_category)
+                    page = self.wiki_wiki.page(page_category)
+                    text = Wikipedia_Scraper.get_text_from_page(page)
+                except Exception as e:
+                    attempt_cnt+=1
+                    print(e)
+            if attempt_cnt==max_attempts:
+                print("Skipping {}".format(page_category))
+                continue
             for category in categories:
                 if category not in category_to_texts:
                     category_to_texts[category] = list() 
                 category_to_texts[category].append(text)
+            if page_num % 1000:
+                self.save_data(category_to_texts, output_file = self.output_file, format="pickle")
         return category_to_texts
 
     def get_categories_from_page(self, page_name):
@@ -100,4 +118,5 @@ class Wikipedia_Scraper:
         return res
 
 wiki_scraper = Wikipedia_Scraper()
-wiki_scraper.run_scraper(min_pages = 100000, max_depth = 5, output_file = "data/category_text_pairs_large")
+# wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = "data/category_text_pairs_large")
+wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = "data/category_text_pairs_large", page_url_path="data/page_urls")
