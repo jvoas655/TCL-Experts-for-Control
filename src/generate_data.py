@@ -95,7 +95,7 @@ class Wikipedia_Scraper:
                     categories = self.get_categories_from_page(page_category)
                     page = self.wiki_wiki.page(page_category)
                     text = Wikipedia_Scraper.get_text_from_page(page)
-                    continue
+                    break
                 except Exception as e:
                     print(e)
             if attempt_cnt==max_attempts:
