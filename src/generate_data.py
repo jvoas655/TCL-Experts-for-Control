@@ -5,14 +5,15 @@ import pickle
 
 class Wikipedia_Scraper:
 
-    def __init__(self):
+    def __init__(self, use_schrome_driver = True):
         self.xpath_sub_categories = "//*[(@id = \"mw-subcategories\")]//a"
         # self.xpath_pages = "//*[(@id = \"mw-pages\")]//a"
         # self.xpath_pages = "//*[contains(concat( \" \", @class, \" \" ), concat( \" \", \"mw-category-group\", \" \" ))]//a"
         self.xpath_pages = "//*[(@id = \"mw-pages\")]//*[contains(concat( \" \", @class, \" \" ), concat( \" \", \"mw-category-group\", \" \" ))]//a"
         self.wiki_wiki = wikipediaapi.Wikipedia('en')
         # TODO: replace filepath with relative file path
-        self.driver = webdriver.Chrome(executable_path='/Users/alex3/Documents/UT/NLG/LiFT-Co-Expert-Text-Generation/chromedriver')
+        if use_schrome_driver:
+            self.driver = webdriver.Chrome(executable_path='/Users/alex3/Documents/UT/NLG/LiFT-Co-Expert-Text-Generation/chromedriver')
 
     def run_scraper(self, min_pages = 1000, max_depth = 3, output_file = "data/category_text_pairs", page_url_path = None):
         self.output_file = output_file
@@ -87,14 +88,15 @@ class Wikipedia_Scraper:
             attempt_cnt = 0
             max_attempts = 5
             while attempt_cnt < max_attempts:
+                attempt_cnt+=1
                 page_category = page_url.split("/")[-1]
                 time.sleep(.5)
                 try:
                     categories = self.get_categories_from_page(page_category)
                     page = self.wiki_wiki.page(page_category)
                     text = Wikipedia_Scraper.get_text_from_page(page)
+                    continue
                 except Exception as e:
-                    attempt_cnt+=1
                     print(e)
             if attempt_cnt==max_attempts:
                 print("Skipping {}".format(page_category))
@@ -117,6 +119,8 @@ class Wikipedia_Scraper:
                 res.append(" ".join(cleaned_category))
         return res
 
-wiki_scraper = Wikipedia_Scraper()
+# wiki_scraper = Wikipedia_Scraper(use_schrome_driver = True)
 # wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = "data/category_text_pairs_large")
+
+wiki_scraper = Wikipedia_Scraper(use_schrome_driver = False)
 wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = "data/category_text_pairs_large", page_url_path="data/page_urls")
