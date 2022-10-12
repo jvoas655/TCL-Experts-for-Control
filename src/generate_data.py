@@ -14,11 +14,12 @@ class Wikipedia_Scraper:
         # TODO: replace filepath with relative file path
         self.driver = webdriver.Chrome(executable_path='/Users/alex3/Documents/UT/NLG/LiFT-Co-Expert-Text-Generation/chromedriver')
 
-    def run_scraper(self, min_pages = 10, max_depth = 3):
+    def run_scraper(self, min_pages = 1000, max_depth = 3, output_file = "data/category_text_pairs"):
         page_urls = self.get_pages( min_pages = min_pages, max_depth = max_depth)
         category_to_text_pairs = self.make_category_text_pairs(page_urls)
-        self.save_data(category_to_text_pairs, output_file = "data/category_text_pairs", format="pickle")
-    
+        self.save_data(category_to_text_pairs, output_file = output_file, format="pickle")
+        print("Done Scraping")
+
     def save_data(self, category_to_text_pairs, output_file, format="pickle"):
         if format == "pickle":
             with open(output_file, 'wb') as fp:
@@ -36,7 +37,7 @@ class Wikipedia_Scraper:
         return category_urls
 
     def get_pages_from_category_page(self):
-        time.sleep(.5)
+        time.sleep(.33) # limit of 200 calls per second
         elements_pages = self.driver.find_elements("xpath", self.xpath_pages)
         page_urls = []
         for elem in elements_pages:
@@ -99,4 +100,4 @@ class Wikipedia_Scraper:
         return res
 
 wiki_scraper = Wikipedia_Scraper()
-wiki_scraper.run_scraper()
+wiki_scraper.run_scraper(min_pages = 100000, max_depth = 5, output_file = "data/category_text_pairs_large")
