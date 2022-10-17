@@ -2,6 +2,10 @@ import wikipediaapi
 from selenium import webdriver
 import time
 import pickle
+from utils.parsers import WebScraperParser
+import h5py
+from sklearn.model_selection import train_test_split
+import numpy as np
 
 class Wikipedia_Scraper:
 
@@ -118,9 +122,54 @@ class Wikipedia_Scraper:
             if (len(cleaned_category) <= 2):
                 res.append(" ".join(cleaned_category))
         return res
+    
 
-# wiki_scraper = Wikipedia_Scraper(use_schrome_driver = True)
-# wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = "data/category_text_pairs_large")
+def add_pairs_to_h5(file_ref, name, data):
+    grp = file_ref.create_group(name)
+    text_grp = grp.create_group("text")
+    cat_grp = grp.create_group("categories")
+    for i, pair in enumerate(data):
+        text, cats = pair
+        text_grp.create_dataset(str(i), data=text)
+        cat_grp.create_dataset(str(i), data=np.array(cats, dtype="S"))
 
-wiki_scraper = Wikipedia_Scraper(use_schrome_driver = False)
-wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = "data/category_text_pairs_large", page_url_path="data/page_urls")
+def text_process(text):
+    text = text.lower().strip()
+    text = bytes(text, 'utf-8').decode('utf-8', 'ignore').encode("utf-8")
+    return text
+
+def filter_results(results):
+    filtered_results = []
+    for p in generated_results:
+        cats = list(map(lambda c: text_process(c), p[1]))
+        cats = list(filter(lambda c: c != "", cats))
+        if (len(cats) > 0):
+            text = text_process(p[0])
+            cats = cats
+            filtered_results.append((text, cats))
+    return filtered_results
+
+if __name__ == "__main__":
+    args = WebScraperParser.parse_args()
+    # wiki_scraper = Wikipedia_Scraper(use_schrome_driver = True)
+    # wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = "data/category_text_pairs_large")
+
+    wiki_scraper = Wikipedia_Scraper(use_schrome_driver = False)
+    wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = args.output, page_url_path="data/page_urls")
+    with open(args.output, "rb") as file_ref:
+        generated_results = pickle.load(file_ref)
+    filtered_results = filter_results(generated_results)
+    val_test_results, train_results = train_test_split(filtered_results, test_size = 0.8)
+    val_results, test_results = train_test_split(val_test_results, test_size=0.5)
+
+    with h5py.File(str(args.output) + ".hdf5", "w") as  h5_file:
+        print("Writing Train")
+        add_pairs_to_h5(h5_file, "train", train_results)
+
+        print("Writing Val")
+        add_pairs_to_h5(h5_file, "val", val_results)
+        
+        print("Writing Test")
+        add_pairs_to_h5(h5_file, "text", test_results)
+        
+    
