@@ -145,7 +145,6 @@ def filter_results(results):
         cats = list(filter(lambda c: c != "", cats))
         if (len(cats) > 0):
             text = text_process(p[0])
-            cats = cats
             filtered_results.append((text, cats))
     return filtered_results
 
@@ -154,8 +153,8 @@ if __name__ == "__main__":
     # wiki_scraper = Wikipedia_Scraper(use_schrome_driver = True)
     # wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = "data/category_text_pairs_large")
 
-    wiki_scraper = Wikipedia_Scraper(use_schrome_driver = False)
-    wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = args.output, page_url_path="data/page_urls")
+    #wiki_scraper = Wikipedia_Scraper(use_schrome_driver = False)
+    #wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = args.output, page_url_path="data/page_urls")
     with open(args.output, "rb") as file_ref:
         generated_results = pickle.load(file_ref)
     filtered_results = filter_results(generated_results)
@@ -170,6 +169,6 @@ if __name__ == "__main__":
         add_pairs_to_h5(h5_file, "val", val_results)
         
         print("Writing Test")
-        add_pairs_to_h5(h5_file, "text", test_results)
+        add_pairs_to_h5(h5_file, "test", test_results)
         
     
