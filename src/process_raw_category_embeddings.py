@@ -78,7 +78,7 @@ if __name__ == "__main__":
                         cat_embs = []
                         for cat in cats:
                             cat_ind = all_cats.index(cat)
-                            cat_embs.append(embedded_cats[cat_ind, :])
+                            cat_embs.append(embedded_cats[cat_ind, :].reshape(1, -1))
                         cat_embs = np.concatenate(cat_embs)
                         grp.create_dataset(key, data = cat_embs)
     if ("concat" in args.gen_type):
