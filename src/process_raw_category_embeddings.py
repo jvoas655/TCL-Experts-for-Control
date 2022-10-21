@@ -1,3 +1,5 @@
+import itertools
+import random
 from utils.parsers import CatEmbExtractorParser
 from tqdm import tqdm
 from multiprocessing import Pool
@@ -57,15 +59,17 @@ if __name__ == "__main__":
                     for res in pool.imap_unordered(proc_tokenize, proc_args):
                         tokenized_cats.append(res.to(device=device))
                         tq.update(batch_size)
+            tcats = list(map(lambda t: np.mean(np.where(torch.sum(t["attention_mask"], dim = 1).detach().cpu().numpy() == args.max_tokens_ind, 1, 0)), tokenized_cats))
+            print("Token Length Utilization:", np.mean(tcats))
+            
             proc_args = [(token_cat, model) for token_cat in tokenized_cats]
             embedded_cats = []
             with tqdm(total=len(tokenized_cats) * batch_size, desc=f"Extracting Category Embeddings: {model_name}") as tq:
                 for token_batch in tokenized_cats:
                     res = model(**token_batch)
-                    embedded_cats.append(torch.mean(res.last_hidden_state, dim=1).detach().cpu().numpy())
+                    embedded_cats.append(torch.sum(res.last_hidden_state, dim=1).detach().cpu().numpy())
                     tq.update(batch_size)
             embedded_cats = np.concatenate(embedded_cats)
-            
             with h5py.File(args.path, "r+") as data_file:
                 grp_name = f"raw_cat_embeddings_ind_{model_name.replace('-', '_')}"
                 for datakey in ["test", "train", "val"]:
@@ -84,13 +88,20 @@ if __name__ == "__main__":
     if ("concat" in args.gen_type):
         data_file = h5py.File(args.path, "r")
         all_cats = []
+        determ_keys = {}
+        cat_ind = 0
         for datakey in ["test", "train", "val"]:
             keys = list(data_file[f"{datakey}/categories"].keys())
             for key in keys:
-                all_cats += ["; ".join(list(map(lambda e: e.decode("utf-8"), data_file[f"{datakey}/categories/{key}"][()].tolist())))]
+                key_cats = list(map(lambda e: e.decode("utf-8"), data_file[f"{datakey}/categories/{key}"][()].tolist()))
+                determ_key = "; ".join(key_cats)
+                determ_keys[determ_key] = key_cats
         data_file.close()
-        all_cats = list(set(all_cats))
-
+        determ_key_set = list(set(determ_keys.keys()))
+        for determ_key in determ_key_set:
+            perms_key_cats = [np.random.permutation(determ_keys[determ_key]).tolist() for i in range(args.con_rand_perms)]
+            for perm_key_cats in perms_key_cats:
+                all_cats += ["; ".join(perm_key_cats)]
         device = "cpu"
         if (torch.cuda.is_available() and args.device >= 0):
             device = f"cuda:{args.device}"
@@ -110,15 +121,16 @@ if __name__ == "__main__":
                     for res in pool.imap_unordered(proc_tokenize, proc_args):
                         tokenized_cats.append(res.to(device=device))
                         tq.update(batch_size)
+            tcats = list(map(lambda t: np.mean(np.where(torch.sum(t["attention_mask"], dim = 1).detach().cpu().numpy() == args.max_tokens_con, 1, 0)), tokenized_cats))
+            print("Token Length Utilization:", np.mean(tcats))
             proc_args = [(token_cat, model) for token_cat in tokenized_cats]
             embedded_cats = []
             with tqdm(total=len(tokenized_cats) * batch_size, desc=f"Extracting Category Embeddings: {model_name}") as tq:
                 for token_batch in tokenized_cats:
                     res = model(**token_batch)
-                    embedded_cats.append(torch.mean(res.last_hidden_state, dim=1).detach().cpu().numpy())
+                    embedded_cats.append(torch.sum(res.last_hidden_state, dim=1).detach().cpu().numpy())
                     tq.update(batch_size)
-            embedded_cats = np.concatenate(embedded_cats)
-            
+            embedded_cats = np.sum(np.concatenate(embedded_cats).reshape(len(determ_key_set), args.con_rand_perms, -1), axis = 1)
             with h5py.File(args.path, "r+") as data_file:
                 grp_name = f"raw_cat_embeddings_con_{model_name.replace('-', '_')}"
                 for datakey in ["test", "train", "val"]:
@@ -128,8 +140,8 @@ if __name__ == "__main__":
                     keys = list(data_file[f"{datakey}/categories"].keys())
                     for key in tqdm(keys, total = len(keys), desc = f"Writing {datakey} to HDF5: {model_name}"):
                         cats = "; ".join(list(map(lambda e: e.decode("utf-8"), data_file[f"{datakey}/categories/{key}"][()].tolist())))
-                        cat_ind = all_cats.index(cats)
-                        grp.create_dataset(key, data = embedded_cats[cat_ind, :])
+                        cat_ind = determ_key_set.index(cats)
+                        grp.create_dataset(key, data = embedded_cats[cat_ind, :].reshape(1, -1))
 
 
 

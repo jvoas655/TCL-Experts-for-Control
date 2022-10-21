@@ -77,28 +77,36 @@ if __name__ == "__main__":
         train_mse = np.mean(epoch_mses)
         train_loss = np.mean(epoch_losses)
         print(f"Train MSE: {train_mse} | Train Loss: {train_loss}")
-        writer.add_scalar(f"trn-mse-depth-{cur_depth}", train_mse, epoch)
-        writer.add_scalar(f"trn-loss-depth-{cur_depth}", train_loss, epoch)
+        writer.add_scalar(f"trn-mse", train_mse, epoch)
+        writer.add_scalar(f"trn-loss", train_loss, epoch)
         if (epoch > 0 and epoch % args.val_epochs == 0):
-            val_mses = []
-            for i_batch, sample_batched in tqdm(enumerate(val_dataloader), desc = f"Val Step {epoch // args.val_epochs}"):
-                sample_batched = sample_batched.to(device = device)
-                optimizer.zero_grad()
-                recon, _, _ = model.eval()(sample_batched)
-                mse_loss = mse_criterion(sample_batched, recon)
-                loss = recon_loss
+            for depth in range(0, cur_depth + 1):
+                val_mses = []
+                val_l1s = []
+                for i_batch, sample_batched in tqdm(enumerate(val_dataloader), desc = f"Val Step {epoch // args.val_epochs}"):
+                    sample_batched = sample_batched.to(device = device)
+                    optimizer.zero_grad()
+                    recon, _, _ = model.eval()(sample_batched, use_depth=depth)
+                    mse_loss = mse_criterion(sample_batched, recon)
+                    l1_loss = mse_criterion(sample_batched, recon)
 
-                val_mses.append(np.sqrt(mse_loss.detach().cpu().numpy()))
-            val_mse = np.mean(epoch_mses)
-            print(f"Val MSE ({cur_depth}):", val_mse)
-            writer.add_scalar(f"val-mse-depth-{cur_depth}", val_mse, epoch)
+                    val_mses.append(np.sqrt(mse_loss.detach().cpu().numpy()))
+                    val_l1s.append(l1_loss.detach().cpu().numpy())
+                val_mse = np.mean(val_mses)
+                val_l1 = np.mean(val_l1s)
+                print(f"Val MSE: {val_mse} | Val L1: {val_l1} | Depth: {depth}")
+            writer.add_scalar(f"val-mse", val_mse, epoch)
+            writer.add_scalar(f"val-l1", val_l1, epoch)
             print("-" * 20)
             if (cur_depth < args.max_depth and val_mse * args.increment_scale < best_val_mse):
+                stagnant_val_steps = 0
                 best_val_mse = val_mse
             elif (cur_depth == args.max_depth and val_mse < best_val_mse):
                 best_val_mse = val_mse
+                stagnant_val_steps = 0
             else:
                 stagnant_val_steps += 1
+            print(stagnant_val_steps, args.increment_guard, best_val_mse)
             if (stagnant_val_steps > args.increment_guard and args.increment_schedule == "val"):
                 cur_depth += 1
                 model.increment_depth().to(device=device)
