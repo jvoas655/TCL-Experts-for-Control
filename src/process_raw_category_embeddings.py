@@ -66,8 +66,8 @@ if __name__ == "__main__":
             embedded_cats = []
             with tqdm(total=len(tokenized_cats) * batch_size, desc=f"Extracting Category Embeddings: {model_name}") as tq:
                 for token_batch in tokenized_cats:
-                    res = model(**token_batch)
-                    embedded_cats.append(torch.sum(res.last_hidden_state, dim=1).detach().cpu().numpy())
+                    res = model(**token_batch, output_hidden_states=True)
+                    embedded_cats.append(torch.mean(torch.cat(res.hidden_states[-1 * args.use_last_n_hidden:], dim=1), dim=1).detach().cpu().numpy())
                     tq.update(batch_size)
             embedded_cats = np.concatenate(embedded_cats)
             with h5py.File(args.path, "r+") as data_file:
@@ -94,14 +94,14 @@ if __name__ == "__main__":
             keys = list(data_file[f"{datakey}/categories"].keys())
             for key in keys:
                 key_cats = list(map(lambda e: e.decode("utf-8"), data_file[f"{datakey}/categories/{key}"][()].tolist()))
-                determ_key = "; ".join(key_cats)
+                determ_key = ". ".join(key_cats)
                 determ_keys[determ_key] = key_cats
         data_file.close()
         determ_key_set = list(set(determ_keys.keys()))
         for determ_key in determ_key_set:
             perms_key_cats = [np.random.permutation(determ_keys[determ_key]).tolist() for i in range(args.con_rand_perms)]
             for perm_key_cats in perms_key_cats:
-                all_cats += ["; ".join(perm_key_cats)]
+                all_cats += [". ".join(perm_key_cats)]
         device = "cpu"
         if (torch.cuda.is_available() and args.device >= 0):
             device = f"cuda:{args.device}"
@@ -127,10 +127,10 @@ if __name__ == "__main__":
             embedded_cats = []
             with tqdm(total=len(tokenized_cats) * batch_size, desc=f"Extracting Category Embeddings: {model_name}") as tq:
                 for token_batch in tokenized_cats:
-                    res = model(**token_batch)
-                    embedded_cats.append(torch.sum(res.last_hidden_state, dim=1).detach().cpu().numpy())
+                    res = model(**token_batch, output_hidden_states=True)
+                    embedded_cats.append(torch.mean(torch.cat(res.hidden_states[-1 * args.use_last_n_hidden:], dim=1), dim=1).detach().cpu().numpy())
                     tq.update(batch_size)
-            embedded_cats = np.sum(np.concatenate(embedded_cats).reshape(len(determ_key_set), args.con_rand_perms, -1), axis = 1)
+            embedded_cats = np.mean(np.concatenate(embedded_cats).reshape(len(determ_key_set), args.con_rand_perms, -1), axis = 1)
             with h5py.File(args.path, "r+") as data_file:
                 grp_name = f"raw_cat_embeddings_con_{model_name.replace('-', '_')}"
                 for datakey in ["test", "train", "val"]:
@@ -139,7 +139,7 @@ if __name__ == "__main__":
                     grp = data_file[f"{datakey}"].create_group(grp_name)
                     keys = list(data_file[f"{datakey}/categories"].keys())
                     for key in tqdm(keys, total = len(keys), desc = f"Writing {datakey} to HDF5: {model_name}"):
-                        cats = "; ".join(list(map(lambda e: e.decode("utf-8"), data_file[f"{datakey}/categories/{key}"][()].tolist())))
+                        cats = ". ".join(list(map(lambda e: e.decode("utf-8"), data_file[f"{datakey}/categories/{key}"][()].tolist())))
                         cat_ind = determ_key_set.index(cats)
                         grp.create_dataset(key, data = embedded_cats[cat_ind, :].reshape(1, -1))
 
