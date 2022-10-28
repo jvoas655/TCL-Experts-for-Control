@@ -73,23 +73,29 @@ class SOM(torch.nn.Module):
             # Find the value offset for all node values (1, H) - (N, H) and adjust by learning rate
             lr_adjusted_value_offset = lr * (value - self.map_node_values)
             # Find the euclidean distance between all N node locations and the sample value ((N, D) - (1, D))
-            dists = torch.sum(torch.pow(self.map_nodes_locs - self.map_nodes_locs[ind], 2), dim = 1)
+            dists = torch.sqrt(torch.sum(torch.pow(self.map_nodes_locs - self.map_nodes_locs[ind], 2), dim = 1))
             # Pass distances into the scale function to get distance scaling value, and multiply by the learning rate adjusted value offset
             # This means if LR = 1 and dist_scale_func(dist) = 1 for some node, its value would be equal to the sample value
             self.map_node_values += lr_adjusted_value_offset * self.dist_scale_func(dists)[:, None]
         else:
             # Save original index for use later in calculated distance scaling thorugh adjacency steps
             orig_ind = ind
+        # TODO: Add small offset to stop zero blocking
+        initial_value_offset_mag = torch.sqrt(torch.sum(torch.pow(value - self.map_node_values[ind], 2), dim = 1)).item() + 10e-6
         # This loop will cycle through sets of nodes in the map. For each step it will update a set of nodes.
         # On the next loop it will target adjacent AND non-updated nodes. This continues until all nodes are updated (or max steps)
         step = 0
         while ((step < self.max_steps or self.max_steps == -1) and torch.any(adjusted_nodes == False)):
             # Find the value offset for all node values (1, H) - (N, H) and adjust by learning rate
-            lr_adjusted_value_offset = lr * (value - self.map_node_values[ind])
+            value_offset = value - self.map_node_values[ind]
+            value_offset_mag = torch.sqrt(torch.sum(torch.pow(value_offset, 2), dim = 1))
+            value_offset_mag = torch.where(value_offset_mag == 0, 1, value_offset_mag)
+            val_offset_mag_adjustments = (initial_value_offset_mag / value_offset_mag)
+            lr_adjusted_value_offset = lr * value_offset * val_offset_mag_adjustments[:, None]
             # If a distance scaling function is given
             if (self.dist_scale_func is not None and self.apply_dist_through_adj):
                 # Find the euclidean distance between all current step node locations and the sample value ((k, D) - (1, D))
-                dists = torch.sum(torch.pow(self.map_nodes_locs[ind] - self.map_nodes_locs[orig_ind], 2), dim = 1)
+                dists = torch.sqrt(torch.sum(torch.pow(self.map_nodes_locs[ind] - self.map_nodes_locs[orig_ind], 2), dim = 1))
                 # Pass distances into the scale function to get distance scaling value, and multiply by the learning rate adjusted value offset
                 # Also multiply by the adjacency decay value (< 1) to the power of the current step. 
                 # This means if LR = 1 and dist_scale_func(dist) = 1 and either adj_decay = 1 or step = 0 for some node, its value would be equal to the sample value
@@ -109,6 +115,10 @@ class SOM(torch.nn.Module):
         vals = self.map_node_values.clone().detach().cpu().numpy()
         pca = PCA(1)
         tvals = pca.fit_transform(vals)
+        #fig = plt.figure()
+        #ax = fig.add_subplot(projection='3d')
+        #for i in range(len(locs)):
+        #    ax.scatter(*locs[i, :], c=tvals[i, 0], marker = "o")
         plt.scatter(locs[:, 0], locs[:, 1], c = tvals, cmap = cmap)
         plt.show()
 
@@ -119,15 +129,16 @@ if __name__ == "__main__":
     random.seed(42)
     torch.manual_seed(42)
     device = "cpu"
-    if (torch.cuda.is_available()):
-        device = f"cuda:0"
-    samples = torch.randn((400, 6)).to(device = device)
-    locs, values, adjs = construct_grid_map(40, 2, 6, samples, False)
+    #if (torch.cuda.is_available()):
+    #    device = f"cuda:0"
+    print(device)
+    samples = torch.randn((800, 3)).to(device = device)
+    locs, values, adjs = construct_grid_map(40, 2, 3, samples, False)
     dist_scale_func = lambda d: torch.pow(torch.where(torch.clamp(1 - d, min=0) == 1, 1, torch.clamp(1 - d, min=0) / 1), 2)
-    som = SOM(locs, adjs, values, adj_decay = 0.8, dist_scale_func = dist_scale_func, apply_dist_through_adj = True, max_steps=2).to(device = device)
+    som = SOM(locs, adjs, values, adj_decay = 0.8, dist_scale_func = dist_scale_func, apply_dist_through_adj = True, max_steps=1).to(device = device)
 
-    print(samples)
-    print(som.map_node_values)
+    #print(samples)
+    #print(som.map_node_values)
     t = time.time()
     print("Start")
     for i in range(1000000):
@@ -138,16 +149,19 @@ if __name__ == "__main__":
             som.backward(inds[ind, ...], samples[sample, :], max(10e-6, 10e-2 * (100000 / (100000 + i))) / (ind + 1) ** 2)
             break
         if (i % 100 == 0):
-            #print(i, time.time() - t)
+            print(i, time.time() - t)
             t = time.time()
-        if (i % 10000 == 0):
+        if (i % 20000 == 0):
             dists = []
             for sample in range(samples.shape[0]):
                 _, dist = som(samples[sample, :])
                 dists.append(dist)
             
             print(i, torch.mean(torch.abs(torch.cat(dists))))
-            #som.plot()
-            som.max_steps = max(1, som.max_steps-1)
+            som.plot()
+            if (som.max_steps == 1):
+                som.max_steps = 40
+            else:
+                som.max_steps = 1
 
         
