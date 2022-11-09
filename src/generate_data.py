@@ -153,8 +153,8 @@ if __name__ == "__main__":
     # wiki_scraper = Wikipedia_Scraper(use_schrome_driver = True)
     # wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = "data/category_text_pairs_large")
 
-    wiki_scraper = Wikipedia_Scraper(use_schrome_driver = False)
-    wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = args.output, page_url_path="data/page_urls")
+    #wiki_scraper = Wikipedia_Scraper(use_schrome_driver = False)
+    #wiki_scraper.run_scraper(min_pages = 60000, max_depth = 7, output_file = args.output, page_url_path="data/page_urls")
     with open(args.output, "rb") as file_ref:
         generated_results = pickle.load(file_ref)
     filtered_results = filter_results(generated_results)

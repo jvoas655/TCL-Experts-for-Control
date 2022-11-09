@@ -1,18 +1,21 @@
 import random
 import torch
 import numpy as np
+import math
 import matplotlib.pyplot as plt
 import time
 from scipy.spatial import distance
 from tqdm import tqdm
 import matplotlib as mpl
 from sklearn.decomposition import PCA
+import anti_lib_progs.geodesic as geod
+import h5py
 
 def construct_grid_map(n, map_dims=2, value_dims = 5, init = None, edge_connects = True):
     locs = []
     for dim in range(map_dims):
         locs.append(np.linspace(0, 1, n))
-    locs = np.concatenate(list(map(lambda l: l.reshape(1, -1), np.meshgrid(*locs)))).transpose()
+    locs = np.concatenate(list(map(lambda l: l.reshape(1, -1), np.meshgrid(*locs)))).transpose() * 2 - 1
     values = np.random.randn(n ** map_dims *  value_dims).reshape(-1, value_dims)
     if (init is not None):
         for sample in range(min(len(values), len(init))):
@@ -23,104 +26,263 @@ def construct_grid_map(n, map_dims=2, value_dims = 5, init = None, edge_connects
     for point1 in tqdm(range(len(locs)), total = len(locs)):
         for point2 in range(len(locs)):
             if (edge_connects):
-                if (locs[point1][0] == 0 and locs[point2][0] == len(locs)-1 and locs[point1][1] == locs[point2][1]):
+                if (locs[point1][0] == -1 and locs[point2][0] == len(locs)-1 and locs[point1][1] == locs[point2][1]):
                     adjs[point1, point2] = True
                     adjs[point2, point1] = True
-                if (locs[point2][0] == 0 and locs[point1][0] == len(locs)-1 and locs[point1][1] == locs[point2][1]):
+                if (locs[point2][0] == -1 and locs[point1][0] == len(locs)-1 and locs[point1][1] == locs[point2][1]):
                     adjs[point1, point2] = True
                     adjs[point2, point1] = True
 
-                if (locs[point1][1] == 0 and locs[point2][1] == len(locs)-1 and locs[point1][0] == locs[point2][0]):
+                if (locs[point1][1] == -1 and locs[point2][1] == len(locs)-1 and locs[point1][0] == locs[point2][0]):
                     adjs[point1, point2] = True
                     adjs[point2, point1] = True
-                if (locs[point2][1] == 0 and locs[point1][1] == len(locs)-1 and locs[point1][0] == locs[point2][0]):
+                if (locs[point2][1] == -1 and locs[point1][1] == len(locs)-1 and locs[point1][0] == locs[point2][0]):
                     adjs[point1, point2] = True
                     adjs[point2, point1] = True
-            if (dist[point1, point2] > 1 / (n - 1) - e and dist[point1, point2] < 1 / (n - 1) + e):
+            if (dist[point1, point2] > 2 / (n - 1) - e and dist[point1, point2] < 2 / (n - 1) + e):
                 adjs[point1, point2] = True
                 adjs[point2, point1] = True
-        
-                
-    return torch.tensor(locs), torch.tensor(values), adjs
+    locs, values = torch.tensor(locs), torch.tensor(values)
+    mask = torch.ones_like(adjs[:, 0])
+    for i in range(n ** map_dims):
+        if (torch.all(torch.abs(locs[i, :]) < 1)):
+            mask[i] = False
+    locs = locs[mask, :]
+    values = values[mask, :]
+    adjs = adjs[mask, :][:, mask]
+    return locs, values, adjs
+
+def construct_polyhedra_map(m, n, value_dims, samples):
+    verts = []
+    edges = {}
+    faces = []
+    geod.get_poly("i", verts, edges, faces)
+    freq = m ** 2 + n * m + n ** 2
+    grid = geod.make_grid(freq, m, n)
+    post_edges = {}
+    points = verts
+    for face in faces:
+        face_edges = face
+        new_edges = geod.grid_to_points(
+            grid, freq, False, [verts[face[i]] for i in range(3)], face_edges
+        )
+        points[len(points):len(points)] = new_edges
+    points = [p.unit() for p in points]
+    
+    locs = torch.zeros((len(points), 3))
+    for p_ind, point in enumerate(points):
+        locs[p_ind, 0] = point[0]
+        locs[p_ind, 1] = point[1]
+        locs[p_ind, 2] = point[2]
+    values = torch.zeros((len(points), value_dims))
+    for s in range(min(len(samples), len(values))):
+        values[s, :] = samples[s, :]
+    print(len(locs))
+    return locs, values, None
+
+
+
+
 
 class SOM(torch.nn.Module):
-    def __init__(self, map_nodes_locs, map_nodes_adj, map_node_values, adj_decay, dist_scale_func = None, apply_dist_through_adj = False, max_steps = 3):
+    def __init__(self, map_nodes_locs, map_node_values, base_lr, base_sigma, lr_steps, sigma_steps, metric):
         super().__init__()
         self.map_node_values = map_node_values
         self.map_nodes_locs = map_nodes_locs
-        self.map_nodes_adj = map_nodes_adj
-        self.adj_decay = adj_decay
-        self.max_steps = max_steps
-        self.dist_scale_func = dist_scale_func
-        self.apply_dist_through_adj = apply_dist_through_adj
+        self.base_lr = base_lr
+        self.base_sigma = base_sigma
+        self.lr_steps = lr_steps
+        self.sigma_steps = sigma_steps
+        self.metric = metric
     def to(self, *args, **kwargs):
         super().to(**kwargs)
         if ("device" in kwargs):
             self.map_node_values = self.map_node_values.to(device = kwargs["device"])
             self.map_nodes_locs = self.map_nodes_locs.to(device = kwargs["device"])
-            self.map_nodes_adj = self.map_nodes_adj.to(device = kwargs["device"])
         return self
-    def forward(self, samples, n = 1):
+    def forward(self, samples, n = 1, anti=False):
         dist = torch.norm(samples - self.map_node_values, dim=1, p=None)
-        knn = dist.topk(n, largest=False)
+        knn = dist.topk(n, largest=anti)
         return knn.indices, knn.values
-    def backward(self, ind, value, lr):
-        # Create boolean arrway of which size matching a single row of the adjacency list (size = (N,)) init to False
-        # This array will be used to track which nodes have already had their values updated in this backwards step
-        adjusted_nodes = torch.zeros_like(self.map_nodes_adj[0, :])
-        # If we do not wish to apply distance value updates through adjacency AND we are provided a distance function
-        if (self.dist_scale_func is not None and not self.apply_dist_through_adj):
-            # Find the value offset for all node values (1, H) - (N, H) and adjust by learning rate
-            lr_adjusted_value_offset = lr * (value - self.map_node_values)
-            # Find the euclidean distance between all N node locations and the sample value ((N, D) - (1, D))
-            dists = torch.sqrt(torch.sum(torch.pow(self.map_nodes_locs - self.map_nodes_locs[ind], 2), dim = 1))
-            # Pass distances into the scale function to get distance scaling value, and multiply by the learning rate adjusted value offset
-            # This means if LR = 1 and dist_scale_func(dist) = 1 for some node, its value would be equal to the sample value
-            self.map_node_values += lr_adjusted_value_offset * self.dist_scale_func(dists)[:, None]
+    def batch_forward(self, samples, n=1, anti=False):
+        dists = torch.cdist(samples[None, ...], self.map_node_values[None, ...]).squeeze(dim=0)
+        knn = dists.topk(dim = 1, k = n, largest = anti)
+        return knn.indices, knn.values
+    def reward(self, ind, value, t):
+        timestep_sigma = self.base_sigma * math.e ** (-1 * t / self.sigma_steps)
+        neighborhood_const = -2 * timestep_sigma ** 2
+        timestep_lr = self.base_lr * math.e ** (-1 * t / self.lr_steps)
+        if (self.metric == "dist"):
+            all_metrics = torch.sqrt(torch.sum(torch.pow(self.map_nodes_locs - self.map_nodes_locs[ind], 2), dim = 1))
+        elif (self.metric == "ang"):
+            norm_locs = torch.nn.functional.normalize(self.map_nodes_locs, p=2.0, dim=1)
+            cos_ang = norm_locs * norm_locs[ind][None, :]
+            cos_ang = torch.sum(cos_ang.squeeze(dim=0), dim=1)
+            eps = 10e-12
+            cos_ang = torch.clamp(cos_ang, min=-1 + eps, max = 1 - eps)
+            all_metrics = torch.acos(cos_ang)
         else:
-            # Save original index for use later in calculated distance scaling thorugh adjacency steps
-            orig_ind = ind
-        # TODO: Add small offset to stop zero blocking
-        initial_value_offset_mag = torch.sqrt(torch.sum(torch.pow(value - self.map_node_values[ind], 2), dim = 1)).item() + 10e-6
-        # This loop will cycle through sets of nodes in the map. For each step it will update a set of nodes.
-        # On the next loop it will target adjacent AND non-updated nodes. This continues until all nodes are updated (or max steps)
-        step = 0
-        while ((step < self.max_steps or self.max_steps == -1) and torch.any(adjusted_nodes == False)):
-            # Find the value offset for all node values (1, H) - (N, H) and adjust by learning rate
-            value_offset = value - self.map_node_values[ind]
-            value_offset_mag = torch.sqrt(torch.sum(torch.pow(value_offset, 2), dim = 1))
-            value_offset_mag = torch.where(value_offset_mag == 0, 1, value_offset_mag)
-            val_offset_mag_adjustments = (initial_value_offset_mag / value_offset_mag)
-            lr_adjusted_value_offset = lr * value_offset * val_offset_mag_adjustments[:, None]
-            # If a distance scaling function is given
-            if (self.dist_scale_func is not None and self.apply_dist_through_adj):
-                # Find the euclidean distance between all current step node locations and the sample value ((k, D) - (1, D))
-                dists = torch.sqrt(torch.sum(torch.pow(self.map_nodes_locs[ind] - self.map_nodes_locs[orig_ind], 2), dim = 1))
-                # Pass distances into the scale function to get distance scaling value, and multiply by the learning rate adjusted value offset
-                # Also multiply by the adjacency decay value (< 1) to the power of the current step. 
-                # This means if LR = 1 and dist_scale_func(dist) = 1 and either adj_decay = 1 or step = 0 for some node, its value would be equal to the sample value
-                self.map_node_values[ind] += (self.adj_decay ** step) * lr_adjusted_value_offset * self.dist_scale_func(dists)[:, None]
-            else:
-                # Similar to above update but no consideration for distance scaling
-                self.map_node_values[ind] += (self.adj_decay ** step) * lr_adjusted_value_offset
-            # Track that we have updated the value of the nodes in ind for this step
-            adjusted_nodes[ind] = True
-            # Get a new boolean set for all nodes adjacent to our current ind step. Mask out these nodes if they have already been updated
-            ind = torch.where(adjusted_nodes == False, torch.any(self.map_nodes_adj[ind, ...], dim = 0), False)
-            #print(adjusted_nodes)
-            step += 1
+            raise Exception
+        scaling_adjustment = timestep_lr * torch.exp(torch.pow(all_metrics, 2) / neighborhood_const)
+        all_value_offsets = value - self.map_node_values
+        self.map_node_values = torch.add(self.map_node_values, all_value_offsets * scaling_adjustment[:, None])
+    def encode(self, x, n=3): # [Dog, Mammal] = (10, 1024), n = 3, = (752) < [0, 1] 
+        z = torch.zeros(len(self.map_nodes_locs)).to(device = self.map_node_values.get_device())
+        enc_dists = []
+        enc_inds = []
+        for sample in range(len(x)):
+            inds, dists = self(x[sample, :], n=n)
+            for sub_sample in range(len(inds)):
+
+                enc_dists.append(dists[sub_sample].reshape(1))
+                enc_inds.append(inds[sub_sample])
+        enc_dists = torch.concat(enc_dists)
+        max_dist = max(1, torch.max(enc_dists).item())
+        enc_dists = max_dist - enc_dists
+        for i, ind in enumerate(enc_inds):
+            z[ind] += enc_dists[i]
+        norm_scale = torch.sqrt(torch.sum(torch.pow(z, 2))).item()
+        if (norm_scale != 0):
+            z = z / norm_scale
+        return z
+    def inv_encode(self, z, method="som"):
+        inv_z = torch.zeros_like(z)
+        active_nodes = torch.where(z > 0, True, False)
+        z_scales = z[active_nodes]
+        z_locs = self.map_nodes_locs[active_nodes, :]
+        z_values = self.map_node_values[active_nodes, :]
+        if (method == "som"):
+            dists = torch.cdist(z_locs[None, ...], self.map_nodes_locs[None, ...]).squeeze(dim=0)
+            inv_inds = torch.argmax(dists, dim=1)
+        elif (method == "vals"):
+            dists = torch.cdist(z_values[None, ...], self.map_node_values[None, ...]).squeeze(dim=0)
+            inv_inds = torch.argmax(dists, dim=1)
+        inv_z[inv_inds] += z_scales
+        return inv_z
+            
+        
+    @staticmethod
+    def load_samples(path, key, name_key):
+        samples = []
+        names = []
+        with h5py.File(path, "r") as data_file:
+            data = data_file[key]
+            name_data = data_file[name_key]
+            for sub_key in tqdm(data.keys(), desc="Loading Samples"):
+                samples.append(data[sub_key][()])
+                names += name_data[sub_key][()].tolist()
+        samples = torch.tensor(np.concatenate(samples))
+        return samples, names
+        
+    def save(self, path, t):
+        map_locs = self.map_nodes_locs.clone().detach().cpu().numpy()
+        map_values = self.map_node_values.clone().detach().cpu().numpy()
+        np.savez(
+            path, 
+            map_locs = map_locs, 
+            map_values = map_values, 
+            base_lr = self.base_lr, 
+            base_sigma = self.base_sigma,
+            lr_steps = self.lr_steps, 
+            sigma_steps = self.sigma_steps, 
+            metric = self.metric,
+            t = t
+        )
+    @staticmethod
+    def load(path):
+        data = np.load(path)
+        map_nodes_locs = torch.tensor(data["map_locs"])
+        map_node_values = torch.tensor(data["map_values"])
+        som = SOM(map_nodes_locs, map_node_values, data["base_lr"], data["base_sigma"], data["lr_steps"], data["sigma_steps"], data["metric"])
+        return som, data["t"]
+        
+
     def plot(self):
+        axs = []
         cmap = mpl.colormaps["inferno"]
         locs = self.map_nodes_locs.clone().detach().cpu().numpy()
         vals = self.map_node_values.clone().detach().cpu().numpy()
-        pca = PCA(1)
+        fig = plt.figure(figsize=(10, 10))
+        pca = PCA(7)
         tvals = pca.fit_transform(vals)
-        #fig = plt.figure()
-        #ax = fig.add_subplot(projection='3d')
-        #for i in range(len(locs)):
-        #    ax.scatter(*locs[i, :], c=tvals[i, 0], marker = "o")
-        plt.scatter(locs[:, 0], locs[:, 1], c = tvals, cmap = cmap)
+        print(np.cumsum(pca.explained_variance_ratio_))
+        for i in range(0, len(pca.explained_variance_ratio_), 1):
+            tvals_ind = 255 * (tvals[:, i] - tvals[:, i].min()) / (tvals[:, i].max() - tvals[:, i].min())
+
+            ax = fig.add_subplot(3, 3, i+1, projection='3d')
+            ax.grid(False)
+            ax.axis('off')
+            
+            ax.scatter3D(locs[:, 0], locs[:, 1], locs[:, 2], c=tvals_ind, cmap = cmap)
+            axs.append(ax)
+        dists = np.zeros(math.ceil(len(self.map_nodes_locs) ** 0.5) ** 2)
+        angs = np.zeros(math.ceil(len(self.map_nodes_locs) ** 0.5) ** 2)
+        for ind in range(len(self.map_nodes_locs)):
+            anti_ind, _ = self(self.map_node_values[ind, :], int(0.05 * len(self.map_nodes_locs)), anti=True)
+            anti_locs = self.map_nodes_locs[anti_ind, :]
+            loc = self.map_nodes_locs[ind, :]
+            loc = loc / torch.norm(loc, p=2, dim=-1, keepdim=True)
+            angs[ind] = torch.mean(torch.acos(torch.clamp(torch.sum(loc[None, ...] *  anti_locs, dim=-1), min=-1 + 10e-12, max = 1 - 10e-12))).item()
+            loc_dist = np.mean(np.sqrt(np.sum((self.map_nodes_locs[ind, :] - anti_locs).clone().detach().cpu().numpy() ** 2, axis=1)))
+            dists[ind] = loc_dist
+        dists = dists / 2
+        print(2 * np.mean(dists), 2 * np.std(dists))
+        dists = dists.reshape(int(len(dists) ** 0.5), -1)
+
+        angs = angs / math.pi
+        print(180 * np.mean(angs), 180 * np.std(angs))
+        angs = angs.reshape(int(len(angs) ** 0.5), -1)
+
+        ax = fig.add_subplot(3, 3, 8)
+        ax.grid(False)
+        ax.axis('off')
+        ax.imshow(dists, cmap = cmap)
+
+        ax = fig.add_subplot(3, 3, 9)
+        ax.grid(False)
+        ax.axis('off')
+        ax.imshow(angs, cmap = cmap)
+        
+        def on_move(event):
+            ifound = -1
+            ax = None
+            for i in range(len(axs)):
+                if (event.inaxes == axs[i]):
+                    ifound = i
+                    ax = axs[i]
+                    break
+            if (ifound >= 0):
+                for i in range(len(axs)):
+                    if (i != ifound):
+                        if ax.button_pressed in ax._rotate_btn:
+                            axs[i].view_init(elev=ax.elev, azim=ax.azim)
+                        elif ax.button_pressed in ax._zoom_btn:
+                            axs[i].set_xlim3d(ax.get_xlim3d())
+                            axs[i].set_ylim3d(ax.get_ylim3d())
+                            axs[i].set_zlim3d(ax.get_zlim3d())
+            else:
+                return
+            fig.canvas.draw_idle()
+        c1 = fig.canvas.mpl_connect('motion_notify_event', on_move)
+        plt.tight_layout()
         plt.show()
+    def find_inverse_node(self, inds):
+        locs = self.map_nodes_locs[inds, :]
+        anti_locs = -1 * locs
+        dists = torch.cdist(anti_locs[None, ...], self.map_nodes_locs[None, ...]).squeeze(dim=0)
+        knn = torch.topk(dists, k=1, dim=1, largest=False, sorted=True)
+        return knn.indices
+    def process_cluster_stats(self, matched_inds):
+        counts = {}
+        for ind in range(len(matched_inds)):
+            matched_ind = matched_inds[ind].item()
+            if (matched_ind in counts):
+                counts[matched_ind] += 1
+            else:
+                counts[matched_ind] = 1
+        counts_list = list(counts.values())
+        return len(list(set(counts.keys()))) / self.map_nodes_locs.shape[0], np.max(counts_list), np.mean(counts_list), np.median(counts_list), np.std(counts_list), np.min(counts_list)
+
 
 
 
@@ -128,40 +290,45 @@ if __name__ == "__main__":
     np.random.seed(42)
     random.seed(42)
     torch.manual_seed(42)
+    
     device = "cpu"
-    #if (torch.cuda.is_available()):
-    #    device = f"cuda:0"
+    if (torch.cuda.is_available()):
+        device = f"cuda:0"
     print(device)
-    samples = torch.randn((800, 3)).to(device = device)
-    locs, values, adjs = construct_grid_map(40, 2, 3, samples, False)
-    dist_scale_func = lambda d: torch.pow(torch.where(torch.clamp(1 - d, min=0) == 1, 1, torch.clamp(1 - d, min=0) / 1), 2)
-    som = SOM(locs, adjs, values, adj_decay = 0.8, dist_scale_func = dist_scale_func, apply_dist_through_adj = True, max_steps=1).to(device = device)
-
-    #print(samples)
-    #print(som.map_node_values)
-    t = time.time()
+    samples, names = SOM.load_samples("..\\..\\data\\category_text_pairs_xl.hdf5", "train/ind_t5_large_512_ae", "train/categories")
+    samples = samples.to(device=device)
+    names = list(map(lambda t: t.decode("utf-8"), names))
+    #locs, values, adjs = construct_grid_map(10, 3, 1, samples, False)
+    load = None
+    #load = "checkpoint_200000.npz"
+    if (load):
+        som, _ = SOM.load(load).to(device = device)
+    else:
+        locs, values, _ = construct_polyhedra_map(4, 4, samples.shape[1], samples)
+        som = SOM(locs, values, 1e-4, math.pi, 1e6, 1e5, "dist").to(device = device)
+    z = som.encode(samples[0:3, :])
+    print(z)
+    inv_z = som.inv_encode(z)
+    #som.plot()
+    inds, dists = som.batch_forward(samples)
+    print(inds.shape, dists.shape)
+    print(torch.mean(dists))
+    inds, dists = som.batch_forward(samples, n=3)
+    print(inds.shape, dists.shape)
+    print(torch.mean(dists))
+    inds, dists = som.batch_forward(samples, anti=True)
+    print(inds.shape, dists.shape)
+    print(torch.mean(dists))
+    exit()
+    t = time.time() # [(0, 1)] * N
     print("Start")
-    for i in range(1000000):
+    for i in range(0, 50000000):
         sample = random.randint(0, samples.shape[0]-1)
-        inds, dist = som(samples[sample, :], 2)
-        inds = inds[..., None]
-        for ind in range(len(inds)):
-            som.backward(inds[ind, ...], samples[sample, :], max(10e-6, 10e-2 * (100000 / (100000 + i))) / (ind + 1) ** 2)
-            break
-        if (i % 100 == 0):
-            print(i, time.time() - t)
-            t = time.time()
+        inds, dist = som(samples[sample, :])
+        som.reward(inds, samples[sample, :], i)
         if (i % 20000 == 0):
-            dists = []
-            for sample in range(samples.shape[0]):
-                _, dist = som(samples[sample, :])
-                dists.append(dist)
-            
-            print(i, torch.mean(torch.abs(torch.cat(dists))))
-            som.plot()
-            if (som.max_steps == 1):
-                som.max_steps = 40
-            else:
-                som.max_steps = 1
-
+            print(i)
+            som.compute_cluster_stats()
+        if (i % 200000 == 0):
+            som.save("checkpoint_" + str(i) + ".npz")
         

@@ -1,5 +1,5 @@
 from models.autoencoder import Autoencoder
-from utils.dataset import WDMCAutoEncoderDataset
+from utils.dataset import WDMCEmbDataset
 from utils.parsers import AETrainingParser
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -22,8 +22,8 @@ if __name__ == "__main__":
                 checkpoint = torch.load(args.log_path / args.exp_name[exp_set_ind][exp_ind-1] / f"{args.exp_name[exp_set_ind][exp_ind-1]}_best.pt")
                 use_checkpoint = True
             
-            train_dataset = WDMCAutoEncoderDataset(args.path, "train", args.target_category[exp_set_ind])
-            val_dataset = WDMCAutoEncoderDataset(args.path, "val", args.target_category[exp_set_ind])
+            train_dataset = WDMCEmbDataset(args.path, "train", args.target_category[exp_set_ind])
+            val_dataset = WDMCEmbDataset(args.path, "val", args.target_category[exp_set_ind])
 
             train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size,
                                 shuffle=True, num_workers=0)
