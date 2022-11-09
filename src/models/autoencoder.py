@@ -26,9 +26,6 @@ class Autoencoder(torch.nn.Module):
             self.encoder_layers.append(self.activations[self.activation_func]())
             self.decoder_layers = torch.nn.ModuleList([self.activations[self.activation_func]()]) + self.decoder_layers
             self.decoder_layers = torch.nn.ModuleList([torch.nn.Linear(expansion_size // (2 ** (d + 1)), expansion_size // (2 ** d))]) + self.decoder_layers
-            
-        print(self.encoder_layers)
-        print(self.decoder_layers)
 
     def increment_depth(self):
         self.encoder_layers.append(torch.nn.Linear(self.expansion_size // (2 ** self.depth), self.expansion_size // (2 ** (self.depth + 1))))

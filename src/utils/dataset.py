@@ -7,7 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 import h5py
 
 
-class WDMCAutoEncoderDataset(Dataset):
+class WDMCEmbDataset(Dataset):
 
     def __init__(self, file_path, split, cat_embedding_key):
         assert split in ["test", "train", "val"]
