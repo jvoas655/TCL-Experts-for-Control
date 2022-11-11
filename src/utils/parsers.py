@@ -180,4 +180,59 @@ DataCleaner.add_argument("--keep_cats", default = [
                                                                 'con_t5_large_256_encoding_anti', 
                                                                 'con_t5_large_128_encoding_anti',
                                                                 ], help = "Names to store each encoding under")
+
+
+TopicPredictorTrainingParser = argparse.ArgumentParser(description = "Process arguments for training of the text based topic predictor")
+TopicPredictorTrainingParser.add_argument("--path", "-p", default = DATA_PATH / "category_text_pairs_xl.hdf5", help = "File path to raw data which will have the embeddings added into")
+TopicPredictorTrainingParser.add_argument("--batch_size", "-b", default = 64, help = "Number of samples per batch")
+TopicPredictorTrainingParser.add_argument("--epochs", "-e", default = 100, help = "Number of epochs to train for")
+TopicPredictorTrainingParser.add_argument("--val_epochs", "-ve", default = 2, help = "Number of epochs between each val step")
+TopicPredictorTrainingParser.add_argument("--device", "-d", default = 0, type = int, help = "Device to utilize (-1 = CPU) (> - 1 = GPU)")
+TopicPredictorTrainingParser.add_argument("--reduction_dim", default = 64, help = "")
+TopicPredictorTrainingParser.add_argument("--base_model", default = "roberta-large", help = "")
+TopicPredictorTrainingParser.add_argument("--token_count", default=64, help = "")
+TopicPredictorTrainingParser.add_argument("--skip_learn_token_reducer", action="store_false", help = "")
+TopicPredictorTrainingParser.add_argument("--single_adapter", action="store_true", help = "")
+TopicPredictorTrainingParser.add_argument("--finetune_base", action="store_true", help = "")
+TopicPredictorTrainingParser.add_argument("--learning_rate", "-lr", default = 1e-5, help = "Model learning rate")
+TopicPredictorTrainingParser.add_argument("--l1_lambda", "-l1s", default = 0.0001, help = "Scaling factor for computing L1 sparsity loss")
+TopicPredictorTrainingParser.add_argument("--l2_lambda", "-l2s", default = 0.0001, help = "Scaling factor for computing L2 sparsity loss")
+TopicPredictorTrainingParser.add_argument("--sparsity_target", "-st", default = "activations", choices = ["parameters", "activations"], help = "Whether sparsity constraints are applied to parameters or hidden activations")
+TopicPredictorTrainingParser.add_argument("--loss", "-l", default = "L2", choices = ["L2", "L1"], help = "Loss to be used on reconstruction results")
+TopicPredictorTrainingParser.add_argument("--checkpoint", "-ck", default = "", help = "Checkpoint to load")
+TopicPredictorTrainingParser.add_argument("--log_path", "-lp", default = LOG_PATH / "topic_predictor", help = "Directory to store checkpoint and log results to")
+TopicPredictorTrainingParser.add_argument("--target_category", "-tc", default = [
+                                                                'ind_roberta_large_1024_encoding',
+                                                                'ind_roberta_large_512_encoding', 
+                                                                'ind_roberta_large_256_encoding', 
+                                                                'ind_roberta_large_128_encoding',
+                                                                'ind_t5_large_1024_encoding',
+                                                                'ind_t5_large_512_encoding', 
+                                                                'ind_t5_large_256_encoding', 
+                                                                'ind_t5_large_128_encoding',
+                                                                'con_roberta_large_1024_encoding',
+                                                                'con_roberta_large_512_encoding', 
+                                                                'con_roberta_large_256_encoding', 
+                                                                'con_roberta_large_128_encoding',
+                                                                'con_t5_large_1024_encoding',
+                                                                'con_t5_large_512_encoding', 
+                                                                'con_t5_large_256_encoding', 
+                                                                'con_t5_large_128_encoding',
+                                                                'ind_roberta_large_1024_encoding_anti',
+                                                                'ind_roberta_large_512_encoding_anti', 
+                                                                'ind_roberta_large_256_encoding_anti', 
+                                                                'ind_roberta_large_128_encoding_anti',
+                                                                'ind_t5_large_1024_encoding_anti',
+                                                                'ind_t5_large_512_encoding_anti', 
+                                                                'ind_t5_large_256_encoding_anti', 
+                                                                'ind_t5_large_128_encoding_anti',
+                                                                'con_roberta_large_1024_encoding_anti',
+                                                                'con_roberta_large_512_encoding_anti', 
+                                                                'con_roberta_large_256_encoding_anti', 
+                                                                'con_roberta_large_128_encoding_anti',
+                                                                'con_t5_large_1024_encoding_anti',
+                                                                'con_t5_large_512_encoding_anti', 
+                                                                'con_t5_large_256_encoding_anti', 
+                                                                'con_t5_large_128_encoding_anti',
+                                                                ], help = "Which set of categories to train for")
                             

@@ -44,7 +44,6 @@ class TopicPredictorModel(torch.nn.Module):
         ):
         super().__init__()
         self.learnable_token_count = learnable_token_count
-        self.tokenizer = RobertaTokenizer.from_pretrained(base_model)
         self.base_model = RobertaModel.from_pretrained(base_model)
         self.encoder_intermediate_dim = self.base_model.encoder.layer[0].output.dense.out_features
         for param in self.base_model.parameters():
@@ -111,8 +110,9 @@ class TopicPredictorModel(torch.nn.Module):
             
 
 if __name__ == "__main__":
+    tokenizer = RobertaTokenizer.from_pretrained("roberta-large")
     model = TopicPredictorModel(482, 64, "roberta-large", 64, False, False).to(device = "cuda:0")
-    inputs = model.tokenizer([" ".join(["Hi" for i in range(64)]) for i in range(64)], return_tensors="pt", truncation=True, max_length=64, padding=True).to(device = "cuda:0")
+    inputs = tokenizer([" ".join(["Hi" for i in range(64)]) for i in range(64)], return_tensors="pt", truncation=True, max_length=64, padding=True).to(device = "cuda:0")
     outputs, _ = model(inputs)
     print(outputs.shape)
     grad_params, no_grad_params = model.parameter_counts()
