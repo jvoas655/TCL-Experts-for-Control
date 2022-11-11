@@ -48,8 +48,20 @@ class GPT_With_Adapter_Modules(nn.Module):
 
 class GPT2Dataset(Dataset):
 
-    def __init__(self, data):
-        self.sentence_topic_pairs = data["text"]
+    def __init__(self, data_path = "data/text_encoding_pairs.hdf5"):
+        raise NotImplementedError()
+        # with h5py.File(data_path, 'r') as f:
+        #     data = f['default']
+            
+            # get the minimum value
+            # print(min(data))
+            
+            # # get the maximum value
+            # print(max(data))
+            
+            # # get the values ranging from index 0 to 15
+            # print(data[:15])
+        # self.sentence_topic_pairs = data["text"]
 #   def __init__(self, txt_list, tokenizer, gpt2_type="gpt2", max_length=768):
 
 
@@ -95,18 +107,22 @@ class GPT2Dataset(Dataset):
 #           linear2_output = self.linear2(linear2_output)
 def extract_data(file_path):
     split = ["train", "test", "val"]
-    data = h5py.File(file_path, r)
+    data = h5py.File(file_path)
+    # data = list(f) # TODO fix
+    # with h5py.File(file_path, 'r') as f:
+    #     data = f['default']
     train_data = data["train"]
     print(train_data.keys())
     regex = "(cond|ind)_(tf|roverta)_(128|256|512)_encoding" # TODO: modify/use if necessary
     rand = "ind_t5_large_512_encoding"
     for ind in train_data["text"]: 
-        train_data["text"]["0"][()] #.decoder("utf-8")
-        
+        x = train_data["text"]["0"][()] #.decoder("utf-8")
+            
     raise NotImplementedError()
 
 if __name__ == "__main__":
-    file_path = None # TODO: ask jordan what best file for data
+    
+    file_path = "data/text_encoding_pairs.hdf5" # TODO: ask jordan what best file for data
     data = extract_data(file_path)
     model = GPT_With_Adapter_Modules() # You can pass the parameters if required to have more flexible model
     tokenizer = GPT2Tokenizer.from_pretrained('gpt2') # TODO: we are using different tokenizer that Jordan made? right?
