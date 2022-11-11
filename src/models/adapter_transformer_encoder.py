@@ -33,10 +33,19 @@ class AdapterModel(torch.nn.Module):
         return res
 
 class TopicPredictorModel(torch.nn.Module):
-    def __init__(self, output_dim, reduction_dim = 64, single_adapater = False, finetune_base = False):
+    def __init__(
+        self, 
+        output_dim, 
+        reduction_dim = 64, 
+        base_model = "roberta-large", 
+        learnable_token_count = None, 
+        single_adapater = False, 
+        finetune_base = False
+        ):
         super().__init__()
-        self.tokenizer = RobertaTokenizer.from_pretrained("roberta-large")
-        self.base_model = RobertaModel.from_pretrained("roberta-large")
+        self.learnable_token_count = learnable_token_count
+        self.tokenizer = RobertaTokenizer.from_pretrained(base_model)
+        self.base_model = RobertaModel.from_pretrained(base_model)
         self.encoder_intermediate_dim = self.base_model.encoder.layer[0].output.dense.out_features
         for param in self.base_model.parameters():
             param.requires_grad = finetune_base
@@ -51,7 +60,19 @@ class TopicPredictorModel(torch.nn.Module):
                 self.base_model.encoder.layer.insert(i, shared_adapater)
         self.base_model.config.num_hidden_layers = len(self.base_model.encoder.layer)
 
+        if (self.learnable_token_count is not None):
+            self.learnable_token_reducer = torch.nn.ModuleList()
+
+            self.learnable_token_reducer.append(torch.nn.Linear(self.learnable_token_count, self.learnable_token_count // 2))
+            self.learnable_token_reducer.append(torch.nn.LayerNorm(self.learnable_token_count // 2))
+            self.learnable_token_reducer.append(torch.nn.GELU())
+            self.learnable_token_reducer.append(torch.nn.Dropout(p=0.1, inplace=False))
+
+            self.learnable_token_reducer.append(torch.nn.Linear(self.learnable_token_count // 2, 1))
+
         self.output_head = torch.nn.ModuleList()
+
+        
 
         self.output_head.append(torch.nn.Linear(self.encoder_intermediate_dim, self.encoder_intermediate_dim))
         self.output_head.append(torch.nn.LayerNorm(self.encoder_intermediate_dim))
@@ -77,15 +98,21 @@ class TopicPredictorModel(torch.nn.Module):
         
     def forward(self, inputs):
         z = self.base_model(**inputs).last_hidden_state
-        res = torch.mean(z, dim=1).squeeze(dim=1)
+        if (self.learnable_token_count is not None):
+            res = z.transpose(2, 1)
+            for layer in self.learnable_token_reducer:
+                res = layer(res)
+            res = res.transpose(2, 1).squeeze(dim=1)
+        else:
+            res = torch.mean(z, dim=1).squeeze(dim=1)
         for layer in self.output_head:
             res = layer(res)
         return res, z
             
 
 if __name__ == "__main__":
-    model = TopicPredictorModel(482, 64, False, False).to(device = "cuda:0")
-    inputs = model.tokenizer([" ".join(["Hi" for i in range(64)]) for i in range(128)], return_tensors="pt", truncation=True, max_length=64, padding=True).to(device = "cuda:0")
+    model = TopicPredictorModel(482, 64, "roberta-large", 64, False, False).to(device = "cuda:0")
+    inputs = model.tokenizer([" ".join(["Hi" for i in range(64)]) for i in range(64)], return_tensors="pt", truncation=True, max_length=64, padding=True).to(device = "cuda:0")
     outputs, _ = model(inputs)
     print(outputs.shape)
     grad_params, no_grad_params = model.parameter_counts()
