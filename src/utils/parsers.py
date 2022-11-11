@@ -140,4 +140,44 @@ TopicEncodingParser.add_argument("--save_groups", default = [
                                                                 'con_t5_large_256_encoding', 
                                                                 'con_t5_large_128_encoding',
                                                                 ], help = "Names to store each encoding under")
+
+
+DataCleaner = argparse.ArgumentParser(description = "Process arguments for training of the topic SOM")
+DataCleaner.add_argument("--source_path", default = DATA_PATH / "category_text_pairs_xl.hdf5", help = "File path for data to duplicate with a clean version")
+DataCleaner.add_argument("--target_path", default = DATA_PATH / "text_encoding_pairs.hdf5", help = "File path of duplicated and cleaned data")
+DataCleaner.add_argument("--keep_cats", default = [
+                                                                "text",
+                                                                'ind_roberta_large_1024_encoding',
+                                                                'ind_roberta_large_512_encoding', 
+                                                                'ind_roberta_large_256_encoding', 
+                                                                'ind_roberta_large_128_encoding',
+                                                                'ind_t5_large_1024_encoding',
+                                                                'ind_t5_large_512_encoding', 
+                                                                'ind_t5_large_256_encoding', 
+                                                                'ind_t5_large_128_encoding',
+                                                                'con_roberta_large_1024_encoding',
+                                                                'con_roberta_large_512_encoding', 
+                                                                'con_roberta_large_256_encoding', 
+                                                                'con_roberta_large_128_encoding',
+                                                                'con_t5_large_1024_encoding',
+                                                                'con_t5_large_512_encoding', 
+                                                                'con_t5_large_256_encoding', 
+                                                                'con_t5_large_128_encoding',
+                                                                'ind_roberta_large_1024_encoding_anti',
+                                                                'ind_roberta_large_512_encoding_anti', 
+                                                                'ind_roberta_large_256_encoding_anti', 
+                                                                'ind_roberta_large_128_encoding_anti',
+                                                                'ind_t5_large_1024_encoding_anti',
+                                                                'ind_t5_large_512_encoding_anti', 
+                                                                'ind_t5_large_256_encoding_anti', 
+                                                                'ind_t5_large_128_encoding_anti',
+                                                                'con_roberta_large_1024_encoding_anti',
+                                                                'con_roberta_large_512_encoding_anti', 
+                                                                'con_roberta_large_256_encoding_anti', 
+                                                                'con_roberta_large_128_encoding_anti',
+                                                                'con_t5_large_1024_encoding_anti',
+                                                                'con_t5_large_512_encoding_anti', 
+                                                                'con_t5_large_256_encoding_anti', 
+                                                                'con_t5_large_128_encoding_anti',
+                                                                ], help = "Names to store each encoding under")
                             
