@@ -105,7 +105,7 @@ class WDMCGPTEncDataset(Dataset):
         
         self.tokens = []
         for i in tqdm(range(0, len(self.sentences), batch_size), desc = f"Tokenizing {split} encodings", total = len(self.sentences) // batch_size):
-            self.tokens.append(self.tokenizer(self.sentences[i:i+batch_size], return_tensors="pt", truncation=True, padding=True))
+            self.tokens.append(self.tokenizer(self.sentences[i:i+batch_size], return_tensors="pt", padding='max_length', truncation=True, max_length=token_count))
         # TODOL issue, each batch has a different size of 64,x
         input_ids = torch.cat([ind["input_ids"] for ind in self.tokens])
         attention_mask = torch.cat([ind["attention_mask"] for ind in self.tokens])
