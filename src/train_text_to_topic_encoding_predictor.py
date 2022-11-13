@@ -8,11 +8,12 @@ from tqdm import tqdm
 import torch.optim as optim
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
+import time
 
 if __name__ == "__main__":
     args = TopicPredictorTrainingParser.parse_args()
+    start_time = time.time()
     for exp_ind in range(len(args.target_category)):
-
         writer = SummaryWriter(args.log_path / args.target_category[exp_ind], comment=args.target_category[exp_ind])
         use_checkpoint = False
         if (args.checkpoint):
@@ -35,9 +36,11 @@ if __name__ == "__main__":
             output_dim = train_dataset.output_size(),
             reduction_dim = args.reduction_dim, 
             base_model = args.base_model, 
-            learnable_token_count = args.token_count if args.skip_learn_token_reducer else None, 
+            learnable_token_count = args.token_count if not args.disable_learn_token_reducer else None, 
             single_adapater = args.single_adapter, 
-            finetune_base = args.finetune_base
+            finetune_base = not args.disable_finetune_base,
+            use_adapters = not args.disable_use_adapter,
+            threshold_value = args.threshold_value
         ).to(device = device)
 
         l2_criterion = torch.nn.MSELoss()
@@ -47,7 +50,7 @@ if __name__ == "__main__":
         elif (args.loss == "L1"):
             criterion = l1_criterion
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
-        scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, total_iters = 20)
+        scheduler = torch.optim.lr_scheduler.LinearLR(optimizer)
         start_epoch = 0
         best_val = float("inf")
         if (use_checkpoint):
@@ -65,7 +68,7 @@ if __name__ == "__main__":
                 attention_mask = sample_batched["tokens"]["attention_mask"].to(device = device)
                 encodings = sample_batched["encodings"].to(device = device)
                 optimizer.zero_grad()
-                pred, z = model.train()({
+                pred, acts, z = model.train()({
                         "input_ids": input_ids,
                         "attention_mask": attention_mask
                     })
@@ -75,12 +78,15 @@ if __name__ == "__main__":
                     sparse_l1_loss = sum(p.abs().sum() for p in model.parameters())
                     sparse_l2_loss = sum(p.pow(2).sum() for p in model.parameters())
                 elif (args.sparsity_target == "activations"):
-                    sparse_l1_loss = l1_criterion(z, torch.zeros_like(z, device = device))
-                    sparse_l2_loss = l2_criterion(z, torch.zeros_like(z, device = device))
+                    acts = torch.cat(acts)
+                    sparse_l1_loss = l1_criterion(acts, torch.zeros_like(acts, device = device))
+                    sparse_l2_loss = l2_criterion(acts, torch.zeros_like(acts, device = device))
                 if (args.loss == "L2"):
                     pred_loss = l2_loss
                 elif (args.loss == "L1"):
                     pred_loss = l1_loss
+                elif (args.loss == "L1|L2"):
+                    pred_loss = l1_loss + l2_loss
                 loss = pred_loss + args.l1_lambda * sparse_l1_loss + args.l2_lambda * sparse_l2_loss
                 loss.backward()
                 optimizer.step()
@@ -93,7 +99,7 @@ if __name__ == "__main__":
             train_l2 = np.mean(epoch_l2s)
             train_l1 = np.mean(epoch_l1s)
             train_loss = np.mean(epoch_losses)
-            print(f"Train L2 (Epoch={epoch}): {train_l2} | Train L1 {train_l1} | Train Loss: {train_loss}")
+            print(f"Train - (Epoch={epoch}): L2 {train_l2} | L1 {train_l1} | Loss: {train_loss}")
             writer.add_scalar(f"trn-l2", train_l2, epoch)
             writer.add_scalar(f"trn-l1", train_l1, epoch)
             writer.add_scalar(f"trn-loss", train_loss, epoch)
@@ -104,7 +110,7 @@ if __name__ == "__main__":
                     input_ids = sample_batched["tokens"]["input_ids"].to(device = device)
                     attention_mask = sample_batched["tokens"]["attention_mask"].to(device = device)
                     encodings = sample_batched["encodings"].to(device = device)
-                    pred, z = model.eval()({
+                    pred, _, _ = model.eval()({
                             "input_ids": input_ids,
                             "attention_mask": attention_mask
                         })
@@ -116,7 +122,10 @@ if __name__ == "__main__":
                 
                 val_l2 = np.mean(val_l2s)
                 val_l1 = np.mean(val_l1s)
-                print(f"Val L2 (Epoch={epoch}): {val_l2} | Train L1 {val_l1}")
+                percent_complete = ((exp_ind + 1) / len(args.target_category)) * (epoch + 1) / (args.epochs - start_epoch)
+                hours_passed = ((time.time() - start_time) / 3600)
+                remaining_factor = (1 - percent_complete) / max(1e-5, percent_complete)
+                print(f"Val - (Epoch={epoch}): L2 {val_l2} | L1 {val_l1} | Comp {'%.2f' % (100 * percent_complete)}% | ETA {'%.2f' % (hours_passed * remaining_factor)} Hours")
                 writer.add_scalar(f"val-l2", val_l2, epoch)
                 writer.add_scalar(f"val-l1", val_l1, epoch)
                 new_best = False
@@ -126,6 +135,9 @@ if __name__ == "__main__":
                 elif (args.loss == "L1" and val_l1 < best_val):
                     best_val = val_l1
                     new_best = True
+                elif (args.loss == "L1|L2" and val_l1 + val_l2 < best_val):
+                    best_val = val_l1 + val_l2
+                    new_best = True
                 if (new_best):
                     torch.save({
                         'epoch': epoch,
@@ -134,4 +146,6 @@ if __name__ == "__main__":
                         'scheduler_state_dict': optimizer.state_dict(),
                         'best_val': best_val,
                     }, args.log_path / args.target_category[exp_ind] / f"best_checkpoint.pt")
+            
+            
 

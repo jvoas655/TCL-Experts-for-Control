@@ -1,5 +1,6 @@
 import math
 from transformers import RobertaTokenizer, RobertaModel
+from transformers import T5Tokenizer, T5ForConditionalGeneration
 import torch
 
 class AdapterModel(torch.nn.Module):
@@ -26,6 +27,7 @@ class AdapterModel(torch.nn.Module):
     def forward(self, *input, **kwargs):
         z = input[0]
         attention = input[1]
+        #print(attention.shape)
         remainder = input[2:]
         for layer in self.layers:
             z = layer(z)
@@ -40,24 +42,30 @@ class TopicPredictorModel(torch.nn.Module):
         base_model = "roberta-large", 
         learnable_token_count = None, 
         single_adapater = False, 
-        finetune_base = False
+        finetune_base = False,
+        use_adapters = True,
+        threshold_value = 0.05,
+        num_hidden_states = 4
         ):
         super().__init__()
+        assert use_adapters or finetune_base
+        self.num_hidden_states = num_hidden_states
         self.learnable_token_count = learnable_token_count
         self.base_model = RobertaModel.from_pretrained(base_model)
         self.encoder_intermediate_dim = self.base_model.encoder.layer[0].output.dense.out_features
         for param in self.base_model.parameters():
             param.requires_grad = finetune_base
-        if (not single_adapater):
-            num_adapaters = len(self.base_model.encoder.layer) - 1
-            for i in range(num_adapaters, 0, -1):
-                self.base_model.encoder.layer.insert(i, AdapterModel(self.encoder_intermediate_dim, reduction_dim))
-        else:
-            shared_adapater = AdapterModel(self.encoder_intermediate_dim, reduction_dim)
-            num_adapaters = len(self.base_model.encoder.layer) - 1
-            for i in range(num_adapaters, 0, -1):
-                self.base_model.encoder.layer.insert(i, shared_adapater)
-        self.base_model.config.num_hidden_layers = len(self.base_model.encoder.layer)
+        if (use_adapters):
+            if (not single_adapater):
+                num_adapaters = len(self.base_model.encoder.layer) - 1
+                for i in range(num_adapaters, 0, -1):
+                    self.base_model.encoder.layer.insert(i, AdapterModel(self.encoder_intermediate_dim, reduction_dim))
+            else:
+                shared_adapater = AdapterModel(self.encoder_intermediate_dim, reduction_dim)
+                num_adapaters = len(self.base_model.encoder.layer) - 1
+                for i in range(num_adapaters, 0, -1):
+                    self.base_model.encoder.layer.insert(i, shared_adapater)
+            self.base_model.config.num_hidden_layers = len(self.base_model.encoder.layer)
 
         if (self.learnable_token_count is not None):
             self.learnable_token_reducer = torch.nn.ModuleList()
@@ -67,24 +75,31 @@ class TopicPredictorModel(torch.nn.Module):
             self.learnable_token_reducer.append(torch.nn.GELU())
             self.learnable_token_reducer.append(torch.nn.Dropout(p=0.1, inplace=False))
 
-            self.learnable_token_reducer.append(torch.nn.Linear(self.learnable_token_count // 2, 1))
+            self.learnable_token_reducer.append(torch.nn.Linear(self.learnable_token_count // 2, self.learnable_token_count // 4))
+            self.learnable_token_reducer.append(torch.nn.LayerNorm(self.learnable_token_count // 4))
+            self.learnable_token_reducer.append(torch.nn.GELU())
+            self.learnable_token_reducer.append(torch.nn.Dropout(p=0.1, inplace=False))
+
+            self.learnable_token_reducer.append(torch.nn.Linear(self.learnable_token_count // 4, 1))
 
         self.output_head = torch.nn.ModuleList()
 
         
 
-        self.output_head.append(torch.nn.Linear(self.encoder_intermediate_dim, self.encoder_intermediate_dim))
-        self.output_head.append(torch.nn.LayerNorm(self.encoder_intermediate_dim))
+        self.output_head.append(torch.nn.Linear(self.encoder_intermediate_dim * self.num_hidden_states, self.encoder_intermediate_dim  * self.num_hidden_states))
+        self.output_head.append(torch.nn.LayerNorm(self.encoder_intermediate_dim * self.num_hidden_states))
         self.output_head.append(torch.nn.GELU())
         self.output_head.append(torch.nn.Dropout(p=0.1, inplace=False))
 
-        self.output_head.append(torch.nn.Linear(self.encoder_intermediate_dim, output_dim))
-        self.output_head.append(torch.nn.LayerNorm(output_dim))
+        self.output_head.append(torch.nn.Linear(self.encoder_intermediate_dim * self.num_hidden_states, (self.encoder_intermediate_dim * self.num_hidden_states) // 2))
+        self.output_head.append(torch.nn.LayerNorm((self.encoder_intermediate_dim * self.num_hidden_states) // 2))
         self.output_head.append(torch.nn.GELU())
         self.output_head.append(torch.nn.Dropout(p=0.1, inplace=False))
 
-        self.output_head.append(torch.nn.Linear(output_dim, output_dim))
-    
+        self.output_head.append(torch.nn.Linear((self.encoder_intermediate_dim * self.num_hidden_states) // 2, output_dim))
+        
+        self.thresh_layer = torch.nn.Threshold(threshold_value, 0)
+
     def parameter_counts(self):
         grad_params = 0
         no_grad_params = 0
@@ -96,7 +111,8 @@ class TopicPredictorModel(torch.nn.Module):
         return grad_params, no_grad_params
         
     def forward(self, inputs):
-        z = self.base_model(**inputs).last_hidden_state
+        #z = self.base_model(**inputs).last_hidden_state
+        z = torch.cat(self.base_model(**inputs, output_hidden_states=True).hidden_states[-1 * self.num_hidden_states:], dim=2)
         if (self.learnable_token_count is not None):
             res = z.transpose(2, 1)
             for layer in self.learnable_token_reducer:
@@ -104,9 +120,14 @@ class TopicPredictorModel(torch.nn.Module):
             res = res.transpose(2, 1).squeeze(dim=1)
         else:
             res = torch.mean(z, dim=1).squeeze(dim=1)
+        acts = []
         for layer in self.output_head:
             res = layer(res)
-        return res, z
+            acts.append(res)
+        focus_acts = [acts[3].flatten(), acts[7].flatten()]
+        res = torch.nn.functional.normalize(res)
+        res = self.thresh_layer(res)
+        return res, focus_acts, z
             
 
 if __name__ == "__main__":

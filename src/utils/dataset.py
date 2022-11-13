@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from transformers import RobertaTokenizer, GPT2Tokenizer
+from transformers import T5Tokenizer
 from tqdm import tqdm
 import h5py
 
@@ -50,9 +51,9 @@ class WDMCEncDataset(Dataset):
             split_data = file_ref[split]["text"]
             for key in tqdm(split_data.keys(), total = len(split_data.keys()), desc=f"Loading {split} text"):
                 self.summaries.append(split_data[key][()].decode("utf-8"))
-        
         self.tokens = []
         for i in tqdm(range(0, len(self.summaries), batch_size), desc = f"Tokenizing {split} encodings", total = len(self.summaries) // batch_size):
+            #print(self.tokenizer(self.summaries[i:i+batch_size])["input_ids"])
             self.tokens.append(self.tokenizer(self.summaries[i:i+batch_size], return_tensors="pt", truncation=True, max_length=token_count, padding=True))
         input_ids = torch.cat([ind["input_ids"] for ind in self.tokens])
         attention_mask = torch.cat([ind["attention_mask"] for ind in self.tokens])
