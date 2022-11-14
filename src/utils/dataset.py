@@ -82,16 +82,16 @@ class WDMCEncDataset(Dataset):
         }
         return sample
 
-class WDMCGPTEncDataset(Dataset):
+class WDMCGPTokenizedDataset(Dataset):
 
     def __init__(self, file_path, split, target_enc_key, model_name, token_count, batch_size):
         assert split in ["test", "train", "val"]
-        self.encodings = []
-        with h5py.File(file_path, "r") as file_ref:
-            split_data = file_ref[split][target_enc_key]
-            for key in tqdm(split_data.keys(), total = len(split_data.keys()), desc=f"Loading {split} encodings"):
-                self.encodings.append(split_data[key][()].reshape(1, -1))
-        self.encodings = np.concatenate(self.encodings)
+        # self.encodings = []
+        # with h5py.File(file_path, "r") as file_ref:
+        #     split_data = file_ref[split][target_enc_key]
+        #     for key in tqdm(split_data.keys(), total = len(split_data.keys()), desc=f"Loading {split} encodings"):
+        #         self.encodings.append(split_data[key][()].reshape(1, -1))
+        # self.encodings = np.concatenate(self.encodings)
 
         self.tokenizer = GPT2Tokenizer.from_pretrained(model_name)
         self.tokenizer.padding_side = "left"
@@ -116,12 +116,12 @@ class WDMCGPTEncDataset(Dataset):
         }
         
     def __len__(self):
-        return len(self.encodings)
+        return len(self.tokens)
     
-    def output_size(self):
-        return self.encodings.shape[1]
+    # TODO: probably not needed
+    # def output_size(self):
+    #     return self.encodings.shape[1]
 
-    # TODO: is __getitem__ for GPT as roberta
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
@@ -131,7 +131,7 @@ class WDMCGPTEncDataset(Dataset):
         }
         # TODO: why sample?
         sample = {
-            "encodings": self.encodings[idx, :],
+            # "encodings": self.encodings[idx, :],
             "tokens": tokens
         }
         return sample
