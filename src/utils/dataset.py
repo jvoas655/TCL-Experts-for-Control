@@ -129,10 +129,11 @@ class WDMCExpLMDataset(Dataset):
         
 
     def __len__(self):
-        return len(self.encodings)
+        return len(self.tokens)
     
-    def output_size(self):
-        return self.encodings.shape[1]
+    # TODO: probably not needed
+    # def output_size(self):
+    #     return self.encodings.shape[1]
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
@@ -143,7 +144,7 @@ class WDMCExpLMDataset(Dataset):
         assert self.tokenizer is not None
         tokens = self.tokenizer(summaries, return_tensors="pt", truncation=True, max_length=self.max_token_count, padding="max_length")
         sample = {
-            "encodings": self.encodings[idx, :],
+            # "encodings": self.encodings[idx, :],
             "tokens": tokens
         }
         return sample
