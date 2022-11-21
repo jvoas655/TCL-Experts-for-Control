@@ -38,19 +38,32 @@ class WDMCEncDataset(Dataset):
     def __init__(self, file_path, split, target_enc_key, model_name, token_count, batch_size):
         assert split in ["test", "train", "val"]
         self.encodings = []
+        self.anit_encodings = []
+        c = 0
         with h5py.File(file_path, "r") as file_ref:
             split_data = file_ref[split][target_enc_key]
+            anti_split_data = file_ref[split][target_enc_key + "_anti"]
             for key in tqdm(split_data.keys(), total = len(split_data.keys()), desc=f"Loading {split} encodings"):
                 self.encodings.append(split_data[key][()].reshape(1, -1))
+                self.anit_encodings.append(anti_split_data[key][()].reshape(1, -1))
+                if (c > 10000):
+                    break
+                c+=1
         self.encodings = np.concatenate(self.encodings)
+        print(np.mean(self.encodings, axis = 0).tolist())
+        self.anit_encodings = np.concatenate(self.anit_encodings)
 
         self.tokenizer = RobertaTokenizer.from_pretrained(model_name)
 
         self.summaries = []
+        c = 0
         with h5py.File(file_path, "r") as file_ref:
             split_data = file_ref[split]["text"]
             for key in tqdm(split_data.keys(), total = len(split_data.keys()), desc=f"Loading {split} text"):
                 self.summaries.append(split_data[key][()].decode("utf-8"))
+                if (c > 10000):
+                    break
+                c+=1
         self.tokens = []
         for i in tqdm(range(0, len(self.summaries), batch_size), desc = f"Tokenizing {split} encodings", total = len(self.summaries) // batch_size):
             #print(self.tokenizer(self.summaries[i:i+batch_size])["input_ids"])
@@ -78,58 +91,57 @@ class WDMCEncDataset(Dataset):
         }
         sample = {
             "encodings": self.encodings[idx, :],
+            "anti_encodings": self.anit_encodings[idx, :],
             "tokens": tokens
         }
         return sample
 
-class WDMCGPTEncDataset(Dataset):
+class WDMCExpLMDataset(Dataset):
 
-    def __init__(self, file_path, split, target_enc_key, model_name, token_count, batch_size):
+    def __init__(self, file_path, split, target_enc_key, max_token_count, batch_size):
         assert split in ["test", "train", "val"]
         self.encodings = []
+        lim = None
+        c = 0
         with h5py.File(file_path, "r") as file_ref:
             split_data = file_ref[split][target_enc_key]
             for key in tqdm(split_data.keys(), total = len(split_data.keys()), desc=f"Loading {split} encodings"):
                 self.encodings.append(split_data[key][()].reshape(1, -1))
+                if (lim is not None):
+                    c += 1
+                    if (c == lim):
+                        break
         self.encodings = np.concatenate(self.encodings)
 
-        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-        self.tokenizer.padding_side = "left"
-        self.tokenizer.pad_token = self.tokenizer.eos_token # TODO: verify this is the desired padding
-        self.sentences = []
+        self.tokenizer = None
+        self.max_token_count = max_token_count
+
+        self.summaries = []
+        c = 0
         with h5py.File(file_path, "r") as file_ref:
             split_data = file_ref[split]["text"]
             for key in tqdm(split_data.keys(), total = len(split_data.keys()), desc=f"Loading {split} text"):
-                summary = split_data[key][()].decode("utf-8")
-                first_sentence = summary.split(".")[0] + "."
-                self.sentences.append(first_sentence)
+                self.summaries.append(split_data[key][()].decode("utf-8"))
+                if (lim is not None):
+                    c += 1
+                    if (c == lim):
+                        break
         
-        self.tokens = []
-        for i in tqdm(range(0, len(self.sentences), batch_size), desc = f"Tokenizing {split} encodings", total = len(self.sentences) // batch_size):
-            self.tokens.append(self.tokenizer(self.sentences[i:i+batch_size], return_tensors="pt", truncation=True, padding=True))
-        # TODOL issue, each batch has a different size of 64,x
-        input_ids = torch.cat([ind["input_ids"] for ind in self.tokens])
-        attention_mask = torch.cat([ind["attention_mask"] for ind in self.tokens])
-        self.tokens = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-        }
-        
+
     def __len__(self):
         return len(self.encodings)
     
     def output_size(self):
         return self.encodings.shape[1]
 
-    # TODO: is __getitem__ for GPT as roberta
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        tokens = {
-            "input_ids": self.tokens["input_ids"][idx, :],
-            "attention_mask": self.tokens["attention_mask"][idx, :],
-        }
-        # TODO: why sample?
+        elif (type(idx) == int):
+            idx = [idx]
+        summaries = [self.summaries[i] for i in idx]
+        assert self.tokenizer is not None
+        tokens = self.tokenizer(summaries, return_tensors="pt", truncation=True, max_length=self.max_token_count, padding="max_length")
         sample = {
             "encodings": self.encodings[idx, :],
             "tokens": tokens

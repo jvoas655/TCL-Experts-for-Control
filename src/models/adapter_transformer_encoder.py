@@ -40,7 +40,7 @@ class TopicPredictorModel(torch.nn.Module):
         output_dim, 
         reduction_dim = 64, 
         base_model = "roberta-large", 
-        learnable_token_count = None, 
+        learnable_token_count = True, 
         single_adapater = False, 
         finetune_base = False,
         use_adapters = True,
@@ -67,7 +67,23 @@ class TopicPredictorModel(torch.nn.Module):
                     self.base_model.encoder.layer.insert(i, shared_adapater)
             self.base_model.config.num_hidden_layers = len(self.base_model.encoder.layer)
 
-        if (self.learnable_token_count is not None):
+        if (self.learnable_token_count):
+            self.ltcr_input_size = self.encoder_intermediate_dim * self.num_hidden_states
+            self.ltcr_hidden_size = self.ltcr_input_size // 8
+            self.ltcr_hidden_layers = 2
+            self.ltcr_bidir = False
+            self.ltcr_output_size = self.ltcr_hidden_size * (2 if self.ltcr_bidir else 1)
+            self.learnable_token_reducer = torch.nn.LSTM(
+                input_size = self.ltcr_input_size, 
+                hidden_size = self.ltcr_hidden_size,
+                num_layers = self.ltcr_hidden_layers,
+                dropout = 0.1,
+                batch_first = True,
+                bidirectional = self.ltcr_bidir
+                )
+            self.learnable_token_reducer_dropout = torch.nn.Dropout(p=0.1, inplace=False)
+            '''
+
             self.learnable_token_reducer = torch.nn.ModuleList()
 
             self.learnable_token_reducer.append(torch.nn.Linear(self.learnable_token_count, self.learnable_token_count // 2))
@@ -81,12 +97,13 @@ class TopicPredictorModel(torch.nn.Module):
             self.learnable_token_reducer.append(torch.nn.Dropout(p=0.1, inplace=False))
 
             self.learnable_token_reducer.append(torch.nn.Linear(self.learnable_token_count // 4, 1))
+            '''
 
         self.output_head = torch.nn.ModuleList()
-
-        
-
-        self.output_head.append(torch.nn.Linear(self.encoder_intermediate_dim * self.num_hidden_states, self.encoder_intermediate_dim  * self.num_hidden_states))
+        if (self.learnable_token_count):
+            self.output_head.append(torch.nn.Linear(self.ltcr_output_size, self.encoder_intermediate_dim  * self.num_hidden_states))
+        else:
+            self.output_head.append(torch.nn.Linear(self.encoder_intermediate_dim * self.num_hidden_states, self.encoder_intermediate_dim  * self.num_hidden_states))
         self.output_head.append(torch.nn.LayerNorm(self.encoder_intermediate_dim * self.num_hidden_states))
         self.output_head.append(torch.nn.GELU())
         self.output_head.append(torch.nn.Dropout(p=0.1, inplace=False))
@@ -99,6 +116,7 @@ class TopicPredictorModel(torch.nn.Module):
         self.output_head.append(torch.nn.Linear((self.encoder_intermediate_dim * self.num_hidden_states) // 2, output_dim))
         
         self.thresh_layer = torch.nn.Threshold(threshold_value, 0)
+        self.soft_max = torch.nn.Softmax(dim=1)
 
     def parameter_counts(self):
         grad_params = 0
@@ -113,11 +131,20 @@ class TopicPredictorModel(torch.nn.Module):
     def forward(self, inputs):
         #z = self.base_model(**inputs).last_hidden_state
         z = torch.cat(self.base_model(**inputs, output_hidden_states=True).hidden_states[-1 * self.num_hidden_states:], dim=2)
-        if (self.learnable_token_count is not None):
+        if (self.learnable_token_count):
+            h0 = torch.zeros(self.ltcr_hidden_layers * (2 if self.ltcr_bidir else 1), z.shape[0], self.ltcr_hidden_size).to(device = z.get_device())
+            c0 = torch.zeros(self.ltcr_hidden_layers * (2 if self.ltcr_bidir else 1), z.shape[0], self.ltcr_hidden_size).to(device = z.get_device())
+            out, (hn, cn) = self.learnable_token_reducer(z, (h0, c0))
+            #res = torch.mean(hn, dim=0).squeeze(dim=0)
+            #res = torch.mean(out, dim=1).squeeze(dim=1)
+            res = out[:, -1, :]
+            res = self.learnable_token_reducer_dropout(res)
+            '''
             res = z.transpose(2, 1)
             for layer in self.learnable_token_reducer:
                 res = layer(res)
             res = res.transpose(2, 1).squeeze(dim=1)
+            '''
         else:
             res = torch.mean(z, dim=1).squeeze(dim=1)
         acts = []
@@ -125,8 +152,11 @@ class TopicPredictorModel(torch.nn.Module):
             res = layer(res)
             acts.append(res)
         focus_acts = [acts[3].flatten(), acts[7].flatten()]
+        #res = torch.where(res > 0, 1.0, 0.0)
+        #res = torch.nn.functional.normalize(res)
+        #res = self.thresh_layer(res)
         res = torch.nn.functional.normalize(res)
-        res = self.thresh_layer(res)
+        #res = self.soft_max(res)
         return res, focus_acts, z
             
 

@@ -126,7 +126,7 @@ class SOM(torch.nn.Module):
         scaling_adjustment = timestep_lr * torch.exp(torch.pow(all_metrics, 2) / neighborhood_const)
         all_value_offsets = value - self.map_node_values
         self.map_node_values = torch.add(self.map_node_values, all_value_offsets * scaling_adjustment[:, None])
-    def encode(self, x, n=3): # [Dog, Mammal] = (10, 1024), n = 3, = (752) < [0, 1] 
+    def encode(self, x, n=3, modulate_dist = True): # [Dog, Mammal] = (10, 1024), n = 3, = (752) < [0, 1] 
         z = torch.zeros(len(self.map_nodes_locs)).to(device = self.map_node_values.get_device())
         enc_dists = []
         enc_inds = []
@@ -140,10 +140,14 @@ class SOM(torch.nn.Module):
         max_dist = max(1, torch.max(enc_dists).item())
         enc_dists = max_dist - enc_dists
         for i, ind in enumerate(enc_inds):
-            z[ind] += enc_dists[i]
-        norm_scale = torch.sqrt(torch.sum(torch.pow(z, 2))).item()
-        if (norm_scale != 0):
-            z = z / norm_scale
+            if (modulate_dist):
+                z[ind] += enc_dists[i]
+            else:
+                z[ind] = 1
+        if (modulate_dist):
+            norm_scale = torch.sqrt(torch.sum(torch.pow(z, 2))).item()
+            if (norm_scale != 0):
+                z = z / norm_scale
         return z
     def inv_encode(self, z, method="som"):
         inv_z = torch.zeros_like(z)
