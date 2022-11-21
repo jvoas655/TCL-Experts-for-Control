@@ -61,7 +61,7 @@ if __name__ == "__main__":
                     encodings = sample_batched["encodings"].to(device = device)
                     optimizer.zero_grad()
                     outputs = model.train()(tokens, encodings)
-                    
+                    print(outputs["logits"].shape)
                     #cs_loss = torch.mean(cs_criterion(anti_encodings, pred))
                     loss = outputs["loss"]
                     assert loss.dtype is torch.float32

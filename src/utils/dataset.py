@@ -101,7 +101,7 @@ class WDMCExpLMDataset(Dataset):
     def __init__(self, file_path, split, target_enc_key, max_token_count, batch_size):
         assert split in ["test", "train", "val"]
         self.encodings = []
-        lim = None
+        lim = 10000
         c = 0
         with h5py.File(file_path, "r") as file_ref:
             split_data = file_ref[split][target_enc_key]
@@ -129,11 +129,10 @@ class WDMCExpLMDataset(Dataset):
         
 
     def __len__(self):
-        return len(self.tokens)
+        return len(self.encodings)
     
-    # TODO: probably not needed
-    # def output_size(self):
-    #     return self.encodings.shape[1]
+    def output_size(self):
+        return self.encodings.shape[1]
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
@@ -144,7 +143,7 @@ class WDMCExpLMDataset(Dataset):
         assert self.tokenizer is not None
         tokens = self.tokenizer(summaries, return_tensors="pt", truncation=True, max_length=self.max_token_count, padding="max_length")
         sample = {
-            # "encodings": self.encodings[idx, :],
+            "encodings": self.encodings[idx, :],
             "tokens": tokens
         }
         return sample

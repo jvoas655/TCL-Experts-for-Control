@@ -57,13 +57,13 @@ class TopicExpertLM(torch.nn.Module):
             param.requires_grad = finetune_base
         self.adapter_modules = []
         if (not single_adapater):
-            num_adapaters = len(self.base_model.transformer.h) - 1
+            num_adapaters = len(self.base_model.transformer.h)
             for i in range(num_adapaters, 0, -1):
                 self.adapter_modules.append(AdapterModel(self.adapter_intermediate_dim, topic_dim, reduction_dim))
                 self.base_model.transformer.h.insert(i, self.adapter_modules[num_adapaters - i])
         else:
             self.adapter_modules.append(AdapterModel(self.adapter_intermediate_dim, topic_dim, reduction_dim))
-            num_adapaters = len(self.base_model.transformer.h) - 1
+            num_adapaters = len(self.base_model.transformer.h)
             for i in range(num_adapaters, 0, -1):
                 self.base_model.transformer.h.insert(i, self.adapter_modules[0])
         self.base_model.config.n_layer = len(self.base_model.transformer.h)
