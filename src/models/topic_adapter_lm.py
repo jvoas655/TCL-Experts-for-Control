@@ -78,10 +78,13 @@ class TopicExpertLM(torch.nn.Module):
                 no_grad_params += math.prod(param.shape)
         return grad_params, no_grad_params
         
-    def forward(self, inputs, topic_emb):
+    def forward(self, inputs, topic_emb, compute_loss = True):
         for adapter in self.adapter_modules:
             adapter.topic_emb = topic_emb
-        res = self.base_model(**inputs, labels=inputs["input_ids"])
+        if (compute_loss):
+            res = self.base_model(**inputs, labels=inputs["input_ids"])
+        else:
+            res = self.base_model(**inputs)
         return res
             
 

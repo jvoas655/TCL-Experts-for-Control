@@ -94,6 +94,7 @@ class SOM(torch.nn.Module):
         self.lr_steps = lr_steps
         self.sigma_steps = sigma_steps
         self.metric = metric
+        self.mapped_inds = None
     def to(self, *args, **kwargs):
         super().to(**kwargs)
         if ("device" in kwargs):
@@ -105,7 +106,7 @@ class SOM(torch.nn.Module):
         knn = dist.topk(n, largest=anti)
         return knn.indices, knn.values
     def batch_forward(self, samples, n=1, anti=False):
-        dists = torch.cdist(samples[None, ...], self.map_node_values[None, ...]).squeeze(dim=0)
+        dists = torch.cdist(samples, self.map_node_values).squeeze(dim=1)
         knn = dists.topk(dim = 1, k = n, largest = anti)
         return knn.indices, knn.values
     def reward(self, ind, value, t):
@@ -207,13 +208,13 @@ class SOM(torch.nn.Module):
         locs = self.map_nodes_locs.clone().detach().cpu().numpy()
         vals = self.map_node_values.clone().detach().cpu().numpy()
         fig = plt.figure(figsize=(10, 10))
-        pca = PCA(7)
+        pca = PCA(4)
         tvals = pca.fit_transform(vals)
         print(np.cumsum(pca.explained_variance_ratio_))
         for i in range(0, len(pca.explained_variance_ratio_), 1):
             tvals_ind = 255 * (tvals[:, i] - tvals[:, i].min()) / (tvals[:, i].max() - tvals[:, i].min())
 
-            ax = fig.add_subplot(3, 3, i+1, projection='3d')
+            ax = fig.add_subplot(3, 2, i+1, projection='3d')
             ax.grid(False)
             ax.axis('off')
             
@@ -286,6 +287,49 @@ class SOM(torch.nn.Module):
                 counts[matched_ind] = 1
         counts_list = list(counts.values())
         return len(list(set(counts.keys()))) / self.map_nodes_locs.shape[0], np.max(counts_list), np.mean(counts_list), np.median(counts_list), np.std(counts_list), np.min(counts_list)
+    def sample_anti_encoding(self, encoding, sample_mean, sample_std, n=1, cluster_map = None):
+        angular_samples = torch.normal(sample_mean, sample_std, size = (encoding.shape[0], n)).to(device = encoding.get_device())
+        matched_inds, _ = self.batch_forward(encoding)
+        matched_locs = self.map_nodes_locs[matched_inds, :]
+        anti_locs = (1.0 - matched_locs).squeeze(dim=1)
+        anti_locs = torch.nn.functional.normalize(anti_locs, p=2.0, dim=1)
+        if (cluster_map is None):
+            norm_locs = torch.nn.functional.normalize(self.map_nodes_locs, p=2.0, dim=1)
+        else:
+            first_map = False
+            if (self.mapped_inds is None):
+                first_map = True
+                self.mapped_inds = torch.sort(torch.tensor(list(cluster_map.keys()))).values
+            norm_locs = torch.nn.functional.normalize(self.map_nodes_locs[self.mapped_inds], p=2.0, dim=1)
+        cos_ang = anti_locs.matmul(norm_locs.transpose(0, 1))
+        eps = 10e-12
+        cos_ang = torch.clamp(cos_ang, min=-1 + eps, max = 1 - eps)
+        angles = torch.acos(cos_ang)
+        angle_sample_offsets = torch.abs(angles.unsqueeze(2) - angular_samples.unsqueeze(1))
+        knn = torch.topk(angle_sample_offsets, k=1, dim=1, largest=False, sorted=True)
+        
+        anti_inds = knn.indices
+        if (cluster_map is not None):
+            if (first_map):
+                self.mapped_encodings = torch.zeros((len(cluster_map.keys()), self.map_node_values.shape[1]))
+                for ind in range(self.mapped_inds.shape[0]):
+                    self.mapped_encodings[ind, :] = cluster_map[self.mapped_inds[ind].item()]
+            anti_encodings = self.mapped_encodings[anti_inds, :].squeeze(dim=1)
+        else:
+            anti_encodings = self.map_node_values[anti_inds, :].squeeze(dim=1)
+        return anti_encodings
+    def form_cluster_map(self, encodings):
+        matched_inds, _ = self.batch_forward(encodings)
+        cluster_map = {}
+        for ind in range(matched_inds.shape[0]):
+            matched_ind = matched_inds[ind].item()
+            if (matched_ind not in cluster_map):
+                cluster_map[matched_ind] = []
+            cluster_map[matched_ind].append(encodings[ind, :][None, ...])
+        for ind in cluster_map:
+            cluster_map[ind] = torch.mean(torch.cat(cluster_map[ind]), dim=0)
+        return cluster_map
+
 
 
 
@@ -296,20 +340,26 @@ if __name__ == "__main__":
     torch.manual_seed(42)
     
     device = "cpu"
-    if (torch.cuda.is_available()):
-        device = f"cuda:0"
+    #if (torch.cuda.is_available()):
+        #device = f"cuda:0"
     print(device)
-    samples, names = SOM.load_samples("..\\..\\data\\category_text_pairs_xl.hdf5", "train/ind_t5_large_512_ae", "train/categories")
+    samples, names = SOM.load_samples("..\\..\\data\\category_text_pairs_xl.hdf5", "train/raw_cat_embeddings_con_t5_large", "train/categories")
+    
     samples = samples.to(device=device)
+    print(torch.mean(torch.sqrt(torch.sum(torch.pow(samples, 2), dim=1))))
+    exit()
     names = list(map(lambda t: t.decode("utf-8"), names))
     #locs, values, adjs = construct_grid_map(10, 3, 1, samples, False)
     load = None
-    #load = "checkpoint_200000.npz"
+    load =  "..\\..\\logs\\som\\raw_cat_embeddings_con_t5_large\\som_checkpoint_40.npz"
     if (load):
-        som, _ = SOM.load(load).to(device = device)
+        som, _ = SOM.load(load)
+        som = som.to(device = device)
     else:
         locs, values, _ = construct_polyhedra_map(4, 4, samples.shape[1], samples)
         som = SOM(locs, values, 1e-4, math.pi, 1e6, 1e5, "dist").to(device = device)
+    som.plot()
+    exit()
     z = som.encode(samples[0:3, :])
     print(z)
     inv_z = som.inv_encode(z)

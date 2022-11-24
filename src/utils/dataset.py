@@ -98,10 +98,9 @@ class WDMCEncDataset(Dataset):
 
 class WDMCExpLMDataset(Dataset):
 
-    def __init__(self, file_path, split, target_enc_key, max_token_count, batch_size):
+    def __init__(self, file_path, split, target_enc_key, max_token_count, batch_size, lim=None):
         assert split in ["test", "train", "val"]
         self.encodings = []
-        lim = 10000
         c = 0
         with h5py.File(file_path, "r") as file_ref:
             split_data = file_ref[split][target_enc_key]

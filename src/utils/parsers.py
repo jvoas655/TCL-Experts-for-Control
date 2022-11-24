@@ -220,23 +220,47 @@ TopicPredictorTrainingParser.add_argument("--target_category", "-tc", default = 
                             
 TopicExpertLMTrainingParser = argparse.ArgumentParser(description = "")
 TopicExpertLMTrainingParser.add_argument("--path", "-p", default = DATA_PATH / "category_text_pairs_xl.hdf5", help = "File path to raw data which will have the embeddings added into")
-TopicExpertLMTrainingParser.add_argument("--batch_size", "-b", default = 16, help = "Number of samples per batch")
-TopicExpertLMTrainingParser.add_argument("--epochs", "-e", default = 3000, help = "Number of epochs to train for")
+TopicExpertLMTrainingParser.add_argument("--batch_size", "-b", default = 8, help = "Number of samples per batch")
+TopicExpertLMTrainingParser.add_argument("--epochs", "-e", default = 20, help = "Number of epochs to train for")
 TopicExpertLMTrainingParser.add_argument("--val_epochs", "-ve", default = 1, help = "Number of epochs between each val step")
 TopicExpertLMTrainingParser.add_argument("--device", "-d", default = 0, type = int, help = "Device to utilize (-1 = CPU) (> - 1 = GPU)")
 TopicExpertLMTrainingParser.add_argument("--reduction_dim", default = 256, help = "")
 TopicExpertLMTrainingParser.add_argument("--base_model", default = "gpt2", help = "")
 TopicExpertLMTrainingParser.add_argument("--max_token_count", default=128, help = "")
 TopicExpertLMTrainingParser.add_argument("--single_adapter", action="store_true", help = "")
-TopicExpertLMTrainingParser.add_argument("--finetune_base", action="store_true", help = "")
-TopicExpertLMTrainingParser.add_argument("--learning_rate", "-lr", default = 1e-7, help = "Model learning rate")
+TopicExpertLMTrainingParser.add_argument("--finetune_base", "-f", action="store_true", help = "")
+TopicExpertLMTrainingParser.add_argument("--learning_rate", "-lr", default = 5 * 1e-8, help = "Model learning rate")
 TopicExpertLMTrainingParser.add_argument("--checkpoint", "-ck", default = "", help = "Checkpoint to load")
-TopicExpertLMTrainingParser.add_argument("--log_path", "-lp", default = LOG_PATH / "topic_expert", help = "Directory to store checkpoint and log results to")
+TopicExpertLMTrainingParser.add_argument("--token_masking_chance", default = 0.2, help = "")
+TopicExpertLMTrainingParser.add_argument("--classifier_free_guide_chance", default = 0.2, help = "")
+TopicExpertLMTrainingParser.add_argument("--train_with_anti_enc", "-ae", action="store_true", help = "")
+TopicExpertLMTrainingParser.add_argument("--som_sample_mean", default = 0, help = "SOM angular mean to sample with")
+TopicExpertLMTrainingParser.add_argument("--anit_loss_lambda", default = 1.0, help = "SOM angular mean to sample with")
+TopicExpertLMTrainingParser.add_argument("--som_sample_std", default = 0.2, help = "SOM angular std to sample with")
+TopicExpertLMTrainingParser.add_argument("--som_sample_ref_map", "-am", action="store_true", help = "Whether to sample from clustered real encodings")
+TopicExpertLMTrainingParser.add_argument("--som_checkpoint", default = [
+                                                                LOG_PATH / "som" / "raw_cat_embeddings_con_t5_large" / "som_checkpoint_40.npz",
+                                                                #LOG_PATH / "som" / "con_t5_large_512_ae" / "som_checkpoint_40.npz", 
+                                                                #LOG_PATH / "som" / "con_t5_large_256_ae" / "som_checkpoint_40.npz", 
+                                                                #LOG_PATH / "som" / 'raw_cat_embeddings_con_roberta_large' / "som_checkpoint_40.npz", 
+                                                                #LOG_PATH / "som" / "con_roberta_large_512_ae" / "som_checkpoint_40.npz", 
+                                                                #LOG_PATH / "som" / "con_roberta_large_256_ae" / "som_checkpoint_40.npz",
+                                                                ], help = "SOM checkpoint to load")
+TopicExpertLMTrainingParser.add_argument("--log_path", "-lp", default = LOG_PATH / "topic_expert", help = "Directory to load trained SOM from")
 TopicExpertLMTrainingParser.add_argument("--target_category", "-tc", default = [
                                                                 'raw_cat_embeddings_con_t5_large',
-                                                                "con_t5_large_512_ae", 
-                                                                "con_t5_large_256_ae", 
-                                                                'raw_cat_embeddings_con_roberta_large', 
-                                                                "con_roberta_large_512_ae", 
-                                                                "con_roberta_large_256_ae", 
+                                                                #"con_t5_large_512_ae", 
+                                                                #"con_t5_large_256_ae", 
+                                                                #'raw_cat_embeddings_con_roberta_large', 
+                                                                #"con_roberta_large_512_ae", 
+                                                                #"con_roberta_large_256_ae", 
                                                                 ], help = "Which set of categories to train for")
+TopicExpertLMTrainingParser.add_argument("--exp_name", default = [
+                                                                'anti_mapped_t5_1024_ft',
+                                                                #"con_t5_large_512_ae", 
+                                                                #"con_t5_large_256_ae", 
+                                                                #'raw_cat_embeddings_con_roberta_large', 
+                                                                #"con_roberta_large_512_ae", 
+                                                                #"con_roberta_large_256_ae", 
+                                                                ], help = "Which set of categories to train for")
+TopicExpertLMTrainingParser.add_argument("--topic_dim", default = [1024], help = "Which set of categories to train for")
