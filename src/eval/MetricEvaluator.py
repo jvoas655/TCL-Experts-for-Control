@@ -13,7 +13,6 @@ from nltk.translate.bleu_score import sentence_bleu
 class MetricEvaluator:
     rouge_scorer = rouge_scorer.RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
-
     def calc_score(self, method_type, reference: list, hypothesis: list):
         if method_type.lower() == "rouge":
             # loop through all reference sentences and hypothesis to get larger dictionary of all rouge scores
