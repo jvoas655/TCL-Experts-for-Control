@@ -8,6 +8,8 @@ from transformers import RobertaTokenizer, GPT2Tokenizer
 from transformers import T5Tokenizer
 from tqdm import tqdm
 import h5py
+from scipy.spatial import KDTree
+from multiprocessing import Pool
 
 
 class WDMCEmbDataset(Dataset):
@@ -111,8 +113,11 @@ class WDMCExpLMDataset(Dataset):
                     if (c == lim):
                         break
         self.encodings = np.concatenate(self.encodings)
+        print("Building KDTree of Encodings")
+        self.enc_tree = KDTree(self.encodings)
 
         self.tokenizer = None
+        self.anti_encodings = None
         self.max_token_count = max_token_count
 
         self.summaries = []
@@ -125,8 +130,38 @@ class WDMCExpLMDataset(Dataset):
                     c += 1
                     if (c == lim):
                         break
-        
-
+    def get_near_samples(self, sample_encodings):
+        _, idxs = self.enc_tree.query(sample_encodings)
+        idxs = idxs.flatten().tolist()
+        samples = []
+        for idx in idxs:
+            samples.append(self.__getitem__(idx))
+        return samples
+    def preprocess_tokens(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.tokens = self.tokenizer(self.summaries, return_tensors="pt", truncation=True, max_length=self.max_token_count, padding="max_length")
+    def batch_sample_som(self, args):
+        encodings, som, cluster_map = args
+        return som.sample_anti_encoding(encodings, 0.0, 0.0, 1, cluster_map, min_var = True).detach().numpy()
+    def preprocess_anit_encodings(self, som, cluster_map, device, num_workers = 24):
+        anit_encodings_lists = []
+        with tqdm(total = self.encodings.shape[0], desc = "Sampling SOM") as tq:
+            for i in range(0, self.encodings.shape[0], 256):
+                benc = torch.tensor(self.encodings[i: i + 256, ...]).to(device = device)
+                bres = som.sample_anti_encoding(benc, 0.0, 0.0, 1, cluster_map, min_var = True).detach().numpy()
+                anit_encodings_lists.append(bres.reshape(bres.shape[0], -1))
+                tq.update(256)
+        self.anti_encodings = np.concatenate(anit_encodings_lists, axis = 0)
+        anti_token_idxs = []
+        with tqdm(total = self.anti_encodings.shape[0], desc = "Tokenizing Anti-Encodings") as tq:
+            for i in range(0, self.anti_encodings.shape[0], 256):
+                benc = self.encodings[i: i + 256, ...]
+                bres = self.enc_tree.query(benc)[1]
+                anti_token_idxs.append(bres)
+                tq.update(256)
+        anti_token_idxs = np.concatenate(anti_token_idxs, axis = 0)
+        #print(self.anti_encodings.shape, anti_token_idxs.shape)
+        self.anti_tokens = {"input_ids": self.tokens["input_ids"][anti_token_idxs, ...], "attention_mask": self.tokens["attention_mask"][anti_token_idxs, ...]}
     def __len__(self):
         return len(self.encodings)
     
@@ -138,11 +173,14 @@ class WDMCExpLMDataset(Dataset):
             idx = idx.tolist()
         elif (type(idx) == int):
             idx = [idx]
-        summaries = [self.summaries[i] for i in idx]
         assert self.tokenizer is not None
-        tokens = self.tokenizer(summaries, return_tensors="pt", truncation=True, max_length=self.max_token_count, padding="max_length")
+        assert self.anti_encodings is not None
         sample = {
             "encodings": self.encodings[idx, :],
-            "tokens": tokens
+            "tokens_input_ids": self.tokens["input_ids"][idx, ...],
+            "tokens_attention_mask": self.tokens["attention_mask"][idx, ...],
+            "anti_encodings": self.anti_encodings[idx, :],
+            "anti_tokens_input_ids": self.anti_tokens["input_ids"][idx, ...],
+            "anti_tokens_attention_mask": self.anti_tokens["attention_mask"][idx, ...],
         }
         return sample

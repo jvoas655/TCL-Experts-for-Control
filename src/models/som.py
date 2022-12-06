@@ -287,7 +287,7 @@ class SOM(torch.nn.Module):
                 counts[matched_ind] = 1
         counts_list = list(counts.values())
         return len(list(set(counts.keys()))) / self.map_nodes_locs.shape[0], np.max(counts_list), np.mean(counts_list), np.median(counts_list), np.std(counts_list), np.min(counts_list)
-    def sample_anti_encoding(self, encoding, sample_mean, sample_std, n=1, cluster_map = None):
+    def sample_anti_encoding(self, encoding, sample_mean, sample_std, n=1, cluster_map = None, min_var = False):
         angular_samples = torch.normal(sample_mean, sample_std, size = (encoding.shape[0], n)).to(device = encoding.get_device())
         matched_inds, _ = self.batch_forward(encoding)
         matched_locs = self.map_nodes_locs[matched_inds, :]
@@ -299,7 +299,7 @@ class SOM(torch.nn.Module):
             first_map = False
             if (self.mapped_inds is None):
                 first_map = True
-                self.mapped_inds = torch.sort(torch.tensor(list(cluster_map.keys()))).values
+                self.mapped_inds = torch.sort(torch.tensor(list(cluster_map["mean"].keys()))).values
             norm_locs = torch.nn.functional.normalize(self.map_nodes_locs[self.mapped_inds], p=2.0, dim=1)
         cos_ang = anti_locs.matmul(norm_locs.transpose(0, 1))
         eps = 10e-12
@@ -311,23 +311,35 @@ class SOM(torch.nn.Module):
         anti_inds = knn.indices
         if (cluster_map is not None):
             if (first_map):
-                self.mapped_encodings = torch.zeros((len(cluster_map.keys()), self.map_node_values.shape[1]))
+                self.mapped_encodings_means = torch.zeros((len(cluster_map["mean"].keys()), self.map_node_values.shape[1]))
+                self.mapped_encodings_stds = torch.zeros((len(cluster_map["std"].keys()), self.map_node_values.shape[1]))
                 for ind in range(self.mapped_inds.shape[0]):
-                    self.mapped_encodings[ind, :] = cluster_map[self.mapped_inds[ind].item()]
-            anti_encodings = self.mapped_encodings[anti_inds, :].squeeze(dim=1)
+                    std = cluster_map["std"][self.mapped_inds[ind].item()]
+                    mean = cluster_map["mean"][self.mapped_inds[ind].item()]
+                    self.mapped_encodings_means[ind, :] = mean
+                    if (torch.any(torch.logical_or(std <= 0, torch.isnan(std)))):
+                        self.mapped_encodings_stds[ind, :] = eps
+                    else:
+                        self.mapped_encodings_stds[ind, :] = std
+            if (min_var):
+                anti_encodings = self.mapped_encodings_means[anti_inds, :].squeeze(dim=1)
+            else:
+                anti_encodings = torch.normal(self.mapped_encodings_means[anti_inds, :].squeeze(dim=1), self.mapped_encodings_stds[anti_inds, :].squeeze(dim=1) / 2.0)
         else:
             anti_encodings = self.map_node_values[anti_inds, :].squeeze(dim=1)
         return anti_encodings
     def form_cluster_map(self, encodings):
         matched_inds, _ = self.batch_forward(encodings)
-        cluster_map = {}
+        cluster_map = {"std":{}, "mean":{}}
         for ind in range(matched_inds.shape[0]):
             matched_ind = matched_inds[ind].item()
-            if (matched_ind not in cluster_map):
-                cluster_map[matched_ind] = []
-            cluster_map[matched_ind].append(encodings[ind, :][None, ...])
-        for ind in cluster_map:
-            cluster_map[ind] = torch.mean(torch.cat(cluster_map[ind]), dim=0)
+            if (matched_ind not in cluster_map["mean"]):
+                cluster_map["mean"][matched_ind] = []
+                cluster_map["std"][matched_ind] = None
+            cluster_map["mean"][matched_ind].append(encodings[ind, :][None, ...])
+        for ind in cluster_map["mean"]:
+            cluster_map["std"][ind] = torch.std(torch.cat(cluster_map["mean"][ind]), dim=0)
+            cluster_map["mean"][ind] = torch.mean(torch.cat(cluster_map["mean"][ind]), dim=0)
         return cluster_map
 
 
