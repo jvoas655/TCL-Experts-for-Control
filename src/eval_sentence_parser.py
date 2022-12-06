@@ -22,6 +22,7 @@ def create_text_topic_pairs(file_path):
             topic_sentence_pairs.append((topic, sentence))
     random.shuffle(topic_sentence_pairs)
     return topic_sentence_pairs   
-
-topic_sentence_pairs = create_text_topic_pairs("src/eval/sentences_with_labels.txt")
-print(f"Number of unique sentence, topic pairs: {len(topic_sentence_pairs)}")
+    
+if __name__ == "__main__":
+    topic_sentence_pairs = create_text_topic_pairs("src/eval/sentences_with_labels.txt")
+    print(f"Number of unique sentence, topic pairs: {len(topic_sentence_pairs)}")
