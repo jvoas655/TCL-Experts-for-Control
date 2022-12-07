@@ -130,6 +130,16 @@ class WDMCExpLMDataset(Dataset):
                     c += 1
                     if (c == lim):
                         break
+        self.categories = []
+        c = 0
+        with h5py.File(file_path, "r") as file_ref:
+            split_data = file_ref[split]["categories"]
+            for key in tqdm(split_data.keys(), total = len(split_data.keys()), desc=f"Loading {split} text"):
+                self.categories.append("; ".join(list(map(lambda c: c.decode("utf-8"), split_data[key][()]))))
+                if (lim is not None):
+                    c += 1
+                    if (c == lim):
+                        break
     def get_near_samples(self, sample_encodings):
         _, idxs = self.enc_tree.query(sample_encodings)
         idxs = idxs.flatten().tolist()
@@ -140,6 +150,7 @@ class WDMCExpLMDataset(Dataset):
     def preprocess_tokens(self, tokenizer):
         self.tokenizer = tokenizer
         self.tokens = self.tokenizer(self.summaries, return_tensors="pt", truncation=True, max_length=self.max_token_count, padding="max_length")
+        self.preprompt_tokens = self.tokenizer(self.categories, return_tensors="pt", truncation=True, max_length=16, padding="max_length")
     def batch_sample_som(self, args):
         encodings, som, cluster_map = args
         return som.sample_anti_encoding(encodings, 0.0, 0.0, 1, cluster_map, min_var = True).detach().numpy()
@@ -182,5 +193,7 @@ class WDMCExpLMDataset(Dataset):
             "anti_encodings": self.anti_encodings[idx, :],
             "anti_tokens_input_ids": self.anti_tokens["input_ids"][idx, ...],
             "anti_tokens_attention_mask": self.anti_tokens["attention_mask"][idx, ...],
+            "pretokens_input_ids": self.preprompt_tokens.input_ids[idx, ...],
+            "pretokens_attention_mask": self.preprompt_tokens.attention_mask[idx, ...]
         }
         return sample
